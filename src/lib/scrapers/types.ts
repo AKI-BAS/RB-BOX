@@ -34,9 +34,21 @@ export interface DiscoveredDoc {
   title?: string;
   /**
    * Category slug the adapter is confident about (must match categories.slug).
-   * When present, the runner skips the Claude categorizer for this doc.
    */
   categorySlug?: string;
+  /**
+   * Set by adapters whose metadata comes from a structured API (not content
+   * inference) — e.g. a CMS content API that reliably supplies title/tags/
+   * date for every doc, even when no `categorySlug` mapping was confident
+   * enough to set. When true, the runner skips the Claude categorizer
+   * entirely; the doc still imports (uncategorized if `categorySlug` is
+   * unset) rather than spending an AI call on it.
+   *
+   * Unstructured/crawler adapters (HTML link-following, which only ever
+   * knows a URL + anchor text) must leave this unset so the runner still
+   * falls back to AI analysis for them.
+   */
+  structured?: boolean;
   /** Language hint if the adapter knows. */
   language?: 'is' | 'en';
   /** Free-text tags/keywords carried over from the source site, if any. */

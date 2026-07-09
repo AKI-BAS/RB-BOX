@@ -10,9 +10,11 @@
  *      c. Fetch the URL, compute content_hash
  *      d. If content_hash matches an existing document → skip
  *      e. Resolve metadata:
- *           - If the adapter supplied `categorySlug` (a "structured" doc —
- *             e.g. from a CMS content API), build it directly from the
- *             DiscoveredDoc fields. No Claude call.
+ *           - If the adapter marked the doc `structured` (its metadata came
+ *             from a CMS content API, not content inference), build it
+ *             directly from the DiscoveredDoc fields. No Claude call — even
+ *             if `categorySlug` itself couldn't be resolved, the doc still
+ *             imports uncategorized rather than spending an AI call on it.
  *           - Otherwise (an unstructured HTML-crawl doc with only a URL/title
  *             hint), fall back to analyzeDocument (Claude).
  *      f. If PDF, run a cheap pdf-parse sanity check. Extracted text < 200
@@ -33,7 +35,8 @@
  * AI usage: analyzeDocument (Claude) is now only invoked for docs an adapter
  * *can't* self-describe — i.e. crawler adapters that only know a URL/anchor
  * text. Structured adapters (Prismic-backed hms-rb-blod, and any future
- * adapter that supplies categorySlug) skip it entirely. The contributor
+ * adapter that marks its docs `structured: true`) skip it entirely,
+ * regardless of whether a categorySlug happened to resolve. The contributor
  * upload flow (`/api/admin/categorize`) is unaffected — it's a separate code
  * path that never went through this runner.
  */
@@ -355,10 +358,10 @@ async function processDiscoveredDoc(
 
   // e. Resolve metadata — skip Claude when the adapter already supplied a category.
   let resolved: ResolvedMetadata;
-  if (doc.categorySlug) {
+  if (doc.structured) {
     resolved = resolveFromDiscoveredDoc(doc, url, categories);
     if (resolved.category_ids.length === 0) {
-      ctx.log('warn', `categorySlug "${doc.categorySlug}" did not match any known category`, { url });
+      ctx.log('warn', `No category resolved for structured doc (categorySlug="${doc.categorySlug ?? 'none'}")`, { url });
     }
   } else {
     const analysis = await analyzeDocument({

@@ -275,6 +275,7 @@ const hmsRbBlod: ScraperAdapter = {
         sourceRef,
         title,
         categorySlug,
+        structured: true, // every field above comes from the Prismic API, not content inference — never spend an AI call here
         language,
         tags: (doc.tags ?? []).filter((t) => t !== tag).map((t) => t.toLowerCase()),
         publishedAt,
