@@ -75,7 +75,7 @@ export function BrowsePanel({
     categories.filter((c) => c.parent_id === id);
 
   return (
-    <aside className="w-[248px] shrink-0 rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface flex flex-col overflow-hidden">
+    <aside className="w-full sm:w-[248px] shrink-0 rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface flex flex-col overflow-hidden">
       {/* Panel header */}
       <div className="px-4 h-[42px] flex items-center justify-between border-b border-paper-border dark:border-ink-border">
         <div className="flex items-center gap-2">
@@ -86,7 +86,7 @@ export function BrowsePanel({
         </div>
         <button
           onClick={onClose}
-          className="text-paper-faint dark:text-ink-faint hover:text-brick-500 transition"
+          className="text-paper-faint dark:text-ink-faint hover:text-brick-500 transition p-2 -m-2"
           title={t(lang, 'browse')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

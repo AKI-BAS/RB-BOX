@@ -261,13 +261,13 @@ export default function HomePage() {
         <div className="flex items-center gap-2 pl-3 ml-1 border-l border-paper-border dark:border-ink-border">
           <button
             onClick={() => setLang(lang === 'is' ? 'en' : 'is')}
-            className="text-[11px] text-paper-soft dark:text-ink-soft hover:text-brick-500 font-medium tracking-wider px-1"
+            className="text-[11px] text-paper-soft dark:text-ink-soft hover:text-brick-500 font-medium tracking-wider px-1 py-2 -my-1"
           >
             {lang.toUpperCase()}
           </button>
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="text-paper-soft dark:text-ink-soft hover:text-brick-500 p-1"
+            className="text-paper-soft dark:text-ink-soft hover:text-brick-500 p-2 -m-1"
             title={t(lang, 'theme')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -284,7 +284,7 @@ export default function HomePage() {
           {profile?.role === 'admin' && (
             <a
               href="/admin"
-              className="text-paper-soft dark:text-ink-soft hover:text-brick-500 p-1"
+              className="text-paper-soft dark:text-ink-soft hover:text-brick-500 p-2 -m-1"
               title={t(lang, 'adminPanel')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -295,7 +295,7 @@ export default function HomePage() {
           )}
           <button
             onClick={signOut}
-            className="ml-0.5 hover:opacity-80 transition"
+            className="ml-0.5 p-1.5 -m-1.5 hover:opacity-80 transition"
             title={t(lang, 'signOut')}
           >
             <span className="w-6 h-6 rounded-full bg-brick-50 dark:bg-brick-900/40 text-brick-700 dark:text-brick-300 flex items-center justify-center text-[10px] font-semibold">
@@ -307,7 +307,7 @@ export default function HomePage() {
 
       {/* Body — browse panel + main column both live inside a padded canvas so
           the browse card floats rather than sticking to the edge. */}
-      <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-16 flex gap-4 sm:gap-6 items-start">
+      <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-16 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch sm:items-start">
         {browseOpen && (
           <BrowsePanel
             lang={lang}
