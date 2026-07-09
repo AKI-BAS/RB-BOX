@@ -49,11 +49,14 @@ import type { DiscoveredDoc, ScraperAdapter, ScraperContext } from '../types';
  *     document uses a differently-named field.
  *   • No description/summary field exists on this custom type.
  *
- * Because this source gives us real category + title + tag data, discovered
- * docs come back with `categorySlug` populated where we have a confident tag
- * mapping — the runner skips the Claude categorizer entirely for this
- * adapter and inserts documents straight from this metadata (see runner.ts's
- * "structured" path).
+ * This adapter only supplies raw data — title, tags, source_ref, PDF URL. It
+ * does NOT resolve tags to a category_slug itself; that mapping now lives in
+ * the DB (category_tag_rules / category_keywords, see
+ * supabase/migrations/20260709040000_categorization.sql) and is applied by
+ * the runner's categorizer (src/lib/scrapers/categorize.ts) so it's editable
+ * without a deploy. Every doc is marked `structured: true`, so the runner
+ * skips the Claude categorizer entirely regardless of whether a category
+ * ends up resolved.
  *
  * See: https://prismic.io/docs/content-api
  */
@@ -64,42 +67,6 @@ interface RbConfig {
   lang?: string;
   page_size?: number;
 }
-
-// RB-BOX category slugs (from categories seed migration), for reference:
-//   steypa, einangrun, thok, burdarvirki, lagnir, rafmagn, brunavarnir,
-//   hljodvist, vinnuvernd, umhverfismal
-//
-// Tag frequency across all 381 live "RB Blöð" documents (checked 2026-07-09),
-// most → least common: Byggingarvörur(124), Byggingarhlutar(88),
-// Verkþættir og þarfir(81), Sérrit(54), Timbur(29), Byggingartimbur(28),
-// Hlutvörur(27), Steypa(27), Tré(24), "Þök, veggir og gólf"(23),
-// Reynslublöð(23), Klæðningar(21), "Ýmsir byggingarhlutar"(21),
-// "Hreinlætis-, hita-, og loftræstibúnaður"(20), "Áhrif vatns og vinda"(19),
-// Flísar(17), Klæðning(17), Magnvörur(16), innréttingar(16), "Hljóð o.fl."(15),
-// "Hljóð og hljómburður"(15), Hleðslusteinar(14), "Almennar þarfir"(13),
-// Kröfur(13), ... Einangrun(6), Einangrunarefni(4), Burður(3), "Lóð og lagnir"(2),
-// Steinsteypa(2), "raflagnir og rafbúnaður"(1).
-//
-// Most of that vocabulary classifies by *material/product type*
-// (Byggingarvörur, Timbur, Flísar, Málningarvörur…) or is too generic
-// (Byggingarhlutar, "Verkþættir og þarfir", Sérrit) to safely bucket into
-// RB-BOX's *subject* categories — mapping those would guess wrong more often
-// than it'd help, so they're deliberately left unmapped (categorySlug stays
-// undefined; the doc still imports, just uncategorized). Only tags with an
-// unambiguous, near-literal match to an existing category slug are mapped:
-const PRISMIC_TAG_CATEGORY_MAP: Record<string, string> = {
-  'Steypa': 'steypa',
-  'Steinsteypa': 'steypa',
-  'Einangrun': 'einangrun',
-  'Einangrunarefni': 'einangrun',
-  'Burður': 'burdarvirki',
-  'Þök, veggir og gólf': 'thok', // compound tag (roofs+walls+floors) — best-effort, roofs named first
-  'Hljóð o.fl.': 'hljodvist',
-  'Hljóð og hljómburður': 'hljodvist',
-  'Lóð og lagnir': 'lagnir',
-  'Hreinlætis-, hita-, og loftræstibúnaður': 'lagnir', // sanitary/heating/ventilation — closest existing category
-  'raflagnir og rafbúnaður': 'rafmagn',
-};
 
 /**
  * Prismic's link-to-media shape is stable across custom types:
@@ -190,15 +157,6 @@ function deriveSourceRef(version: unknown, docId: string): string {
   return `HMS-${docId}`;
 }
 
-/** First doc tag (besides the discovery tag itself) that maps to a known category. */
-function resolveCategorySlug(tags: string[]): string | undefined {
-  for (const tag of tags) {
-    const slug = PRISMIC_TAG_CATEGORY_MAP[tag];
-    if (slug) return slug;
-  }
-  return undefined;
-}
-
 const hmsRbBlod: ScraperAdapter = {
   slug: 'hms-rb-blod',
   name: 'HMS · Rb-leiðbeiningablöð',
@@ -256,25 +214,17 @@ const hmsRbBlod: ScraperAdapter = {
 
       const title = extractTitle(data) ?? pdf.name?.replace(/\.[^.]+$/, '') ?? doc.id;
       const language: 'is' | 'en' = doc.lang?.startsWith('en') ? 'en' : 'is';
-      const categorySlug = resolveCategorySlug(doc.tags ?? []);
       const sourceRef = deriveSourceRef(data.version, doc.id);
       const publishedAt = typeof data.date === 'string' && data.date
         ? data.date
         : doc.first_publication_date?.slice(0, 10);
 
-      if (!categorySlug) {
-        ctx.log(
-          'warn',
-          `No category mapping for tags [${(doc.tags ?? []).join(', ')}] — importing without a category`,
-          { id: doc.id, sourceRef },
-        );
-      }
-
       const discovered: DiscoveredDoc = {
         url: pdf.url,
         sourceRef,
         title,
-        categorySlug,
+        // No categorySlug here — the runner's categorizer resolves it from
+        // `tags` via the DB-driven tag rules / keyword fallback.
         structured: true, // every field above comes from the Prismic API, not content inference — never spend an AI call here
         language,
         tags: (doc.tags ?? []).filter((t) => t !== tag).map((t) => t.toLowerCase()),

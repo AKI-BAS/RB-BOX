@@ -64,6 +64,21 @@ export interface DiscoveredDoc {
 /** @deprecated use DiscoveredDoc — kept as an alias so older adapter code keeps compiling. */
 export type Candidate = DiscoveredDoc;
 
+/**
+ * Provenance for how a document's categories were decided — stored verbatim
+ * in documents.categorization. One record per document, covering whichever
+ * path actually won (explicit tag rule → keyword match → AI → manual).
+ */
+export interface Categorization {
+  method: 'rule' | 'keyword' | 'ai' | 'manual';
+  /** Raw source tags the doc carried (adapter tags, or empty for AI-only sources). */
+  source_tags: string[];
+  /** Every rule/keyword hit that contributed a category, in priority/weight order. */
+  matched: Array<{ rule?: string; keyword?: string; category_slug: string }>;
+  confidence: number;
+  rationale: string;
+}
+
 /** Config stored in `sources.scrape_config` (jsonb). */
 export interface ScrapeConfig {
   /** URLs the adapter should start crawling from. */

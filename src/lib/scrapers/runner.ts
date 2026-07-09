@@ -9,26 +9,28 @@
  *      b. Insert scrape_queue row (status='pending')
  *      c. Fetch the URL, compute content_hash
  *      d. If content_hash matches an existing document → skip
- *      e. Resolve metadata:
- *           - If the adapter marked the doc `structured` (its metadata came
- *             from a CMS content API, not content inference), build it
- *             directly from the DiscoveredDoc fields. No Claude call — even
- *             if `categorySlug` itself couldn't be resolved, the doc still
- *             imports uncategorized rather than spending an AI call on it.
+ *      e. If the doc carries a `source_ref` and a document with the same
+ *         (source_id, source_ref) already exists and is unchanged → skip
+ *      f. If PDF, run pdf-parse once — feeds both the sanity check (< 200
+ *         chars forces status='pending_review' regardless of source trust)
+ *         and the keyword categorizer below.
+ *      g. Resolve categories + provenance:
+ *           - If the adapter marked the doc `structured` (metadata came from
+ *             a CMS API, not content inference): run the DB-driven
+ *             categorizer (explicit tag rule → keyword match → uncategorized)
+ *             on the doc's tags/title/pdf-text. No Claude call, regardless of
+ *             whether anything actually matched.
  *           - Otherwise (an unstructured HTML-crawl doc with only a URL/title
- *             hint), fall back to analyzeDocument (Claude).
- *      f. If PDF, run a cheap pdf-parse sanity check. Extracted text < 200
- *         chars forces status='pending_review' regardless of source trust.
- *      g. If PDF, upload to Storage; if HTML, store extracted text only
- *      h. Upsert the documents row:
- *           - If the doc carries a `source_ref` and a document with the same
- *             (source_id, source_ref) already exists, update it in place
- *             (or skip if content is unchanged) instead of inserting a
- *             duplicate — this survives the underlying file URL changing.
- *           - Otherwise insert a new row.
- *         status='published' if source.auto_publish else 'pending_review'.
- *      i. Sync document_categories from the resolved category ids.
- *      j. Update scrape_queue.status='imported', link document_id.
+ *             hint): fall back to analyzeDocument (Claude).
+ *         Either way, a `categorization` record is built recording which
+ *         path won and why.
+ *      h. If PDF, upload to Storage; if HTML, store extracted text only
+ *      i. Upsert the documents row (insert new, or update in place if a
+ *         source_ref match existed) — status='published' if
+ *         source.auto_publish else 'pending_review'.
+ *      j. Sync document_categories from the resolved category ids (multiple
+ *         rows per doc are normal now — first in `categorySlugs` is primary).
+ *      k. Update scrape_queue.status='imported', link document_id.
  *   4. Update source.last_scraped_at
  *   5. Update scrape_runs with final tallies
  *
@@ -36,22 +38,43 @@
  * *can't* self-describe — i.e. crawler adapters that only know a URL/anchor
  * text. Structured adapters (Prismic-backed hms-rb-blod, and any future
  * adapter that marks its docs `structured: true`) skip it entirely,
- * regardless of whether a categorySlug happened to resolve. The contributor
+ * regardless of whether a category ended up resolved. The contributor
  * upload flow (`/api/admin/categorize`) is unaffected — it's a separate code
  * path that never went through this runner.
  */
 
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import type { DiscoveredDoc, RunSummary, ScrapeConfig, ScraperContext, Source } from './types';
+import type { Json } from '@/types/database';
+import type { Categorization, DiscoveredDoc, RunSummary, ScrapeConfig, ScraperContext, Source } from './types';
 import { getAdapter } from './registry';
 import { politeFetch, contentHash, normalizeUrl, looksLikeDocument } from './fetch-utils';
 import { analyzeDocument } from './analyze';
+import { categorizeStructuredDoc, type KeywordRule, type TagRule } from './categorize';
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'documents';
 const MIN_PDF_TEXT_CHARS = 200;
 
 type Category = { id: string; slug: string; name: string; name_en: string | null };
+
+interface RulesBundle {
+  categories: Category[];
+  tagRules: TagRule[];
+  keywordRules: KeywordRule[];
+}
+
+async function loadRules(supabase: ReturnType<typeof createAdminClient>): Promise<RulesBundle> {
+  const [{ data: categories }, { data: tagRules }, { data: keywordRules }] = await Promise.all([
+    supabase.from('categories').select('id, slug, name, name_en'),
+    supabase.from('category_tag_rules').select('source_tag, category_slug, priority'),
+    supabase.from('category_keywords').select('keyword, category_slug, weight'),
+  ]);
+  return {
+    categories: categories || [],
+    tagRules: tagRules || [],
+    keywordRules: keywordRules || [],
+  };
+}
 
 interface RunOptions {
   sourceId: string;
@@ -95,10 +118,8 @@ export async function runScrape(opts: RunOptions): Promise<RunSummary> {
   const errorLog: Array<{ url?: string; message: string }> = [];
   const tally = { discovered: 0, added: 0, updated: 0, skipped: 0, errors: 0 };
 
-  // 4. Load categories once for the entire run
-  const { data: categories } = await supabase
-    .from('categories')
-    .select('id, slug, name, name_en');
+  // 4. Load categories + categorization rules once for the entire run
+  const rules = await loadRules(supabase);
 
   const config: ScrapeConfig = (source.scrape_config as ScrapeConfig) || {};
   const maxDocs = config.max_docs_per_run ?? 50;
@@ -125,7 +146,7 @@ export async function runScrape(opts: RunOptions): Promise<RunSummary> {
         break;
       }
       tally.discovered++;
-      const result = await processDiscoveredDoc(doc, source as Source, runId, categories || [], ctx);
+      const result = await processDiscoveredDoc(doc, source as Source, runId, rules, ctx);
       switch (result.kind) {
         case 'added': tally.added++; break;
         case 'updated': tally.updated++; break;
@@ -187,45 +208,35 @@ interface ResolvedMetadata {
   language: 'is' | 'en';
   document_type: 'rb_blad' | 'leidbeining' | 'rannsokn' | 'handbok' | 'annad';
   categories: string[];   // slugs
-  category_ids: string[]; // resolved uuids
+  category_ids: string[]; // resolved uuids, primary first
   tags: string[];
   confidence: number;
 }
 
-function resolveCategoryIds(slugs: string[], categories: Category[]): string[] {
-  return slugs
-    .map((slug) => categories.find((c) => c.slug === slug)?.id)
-    .filter((id): id is string => Boolean(id));
-}
-
-/** Build resolved metadata directly from adapter-supplied fields — no AI call. */
-function resolveFromDiscoveredDoc(doc: DiscoveredDoc, url: string, categories: Category[]): ResolvedMetadata {
-  const slugs = doc.categorySlug ? [doc.categorySlug] : [];
+/** Non-category fields for a structured doc — title/summary/language/type/tags. */
+function buildStructuredFields(doc: DiscoveredDoc, url: string): Omit<ResolvedMetadata, 'categories' | 'category_ids' | 'confidence'> {
   return {
     title: (doc.title || new URL(url).pathname.split('/').pop() || 'Untitled').slice(0, 500),
     summary: (doc.description ?? '').slice(0, 2000),
     language: doc.language ?? 'is',
     document_type: doc.documentType ?? 'annad',
-    categories: slugs,
-    category_ids: resolveCategoryIds(slugs, categories),
     tags: (doc.tags ?? []).slice(0, 10),
-    confidence: 1, // rule-based from a trusted structured source — no inference involved
   };
 }
 
 /**
- * Cheap sanity check that a fetched PDF actually contains extractable text.
- * Catches scans-without-OCR and corrupt/placeholder files. Failure to parse
+ * Parse a fetched PDF's text once. Used both for the thin-content sanity
+ * check and as keyword-scan input for the categorizer. Failure to parse
  * counts as zero-length text, not a pipeline error — the doc still imports,
  * just flagged for review.
  */
-async function sanityCheckPdfText(bytes: Buffer): Promise<{ ok: boolean; length: number }> {
+async function parsePdfText(bytes: Buffer): Promise<{ text: string; length: number }> {
   try {
     const result = await pdfParse(bytes);
-    const length = result.text?.trim().length ?? 0;
-    return { ok: length >= MIN_PDF_TEXT_CHARS, length };
+    const text = (result.text || '').trim();
+    return { text, length: text.length };
   } catch {
-    return { ok: false, length: 0 };
+    return { text: '', length: 0 };
   }
 }
 
@@ -250,11 +261,12 @@ async function processDiscoveredDoc(
   doc: DiscoveredDoc,
   source: Source,
   runId: string,
-  categories: Category[],
+  rules: RulesBundle,
   ctx: ScraperContext,
 ): Promise<CandidateResult> {
   const supabase = createAdminClient();
   const url = normalizeUrl(doc.url);
+  const { categories, tagRules, keywordRules } = rules;
 
   // a. Insert into scrape_queue (idempotent via unique constraint)
   const { data: queueRow, error: queueErr } = await supabase
@@ -356,13 +368,35 @@ async function processDiscoveredDoc(
     return { kind: 'skipped', reason: 'Unchanged (source_ref + content_hash match)' };
   }
 
-  // e. Resolve metadata — skip Claude when the adapter already supplied a category.
+  // e. Parse PDF text once — feeds both the sanity check and the keyword categorizer.
+  let pdfText = '';
+  let pdfTextLength = 0;
+  if (isPdf) {
+    const parsed = await parsePdfText(bytes);
+    pdfText = parsed.text;
+    pdfTextLength = parsed.length;
+  }
+
+  // f. Resolve categories + provenance — skip Claude for structured docs.
   let resolved: ResolvedMetadata;
+  let categorization: Categorization;
   if (doc.structured) {
-    resolved = resolveFromDiscoveredDoc(doc, url, categories);
-    if (resolved.category_ids.length === 0) {
-      ctx.log('warn', `No category resolved for structured doc (categorySlug="${doc.categorySlug ?? 'none'}")`, { url });
+    const cat = categorizeStructuredDoc(
+      { tags: doc.tags ?? [], title: doc.title, text: pdfText || undefined, explicitCategorySlug: doc.categorySlug },
+      tagRules,
+      keywordRules,
+      categories,
+    );
+    if (cat.categorySlugs.length === 0) {
+      ctx.log('warn', 'No tag rule or keyword match — importing uncategorized', { url });
     }
+    resolved = {
+      ...buildStructuredFields(doc, url),
+      categories: cat.categorySlugs,
+      category_ids: cat.categoryIds,
+      confidence: cat.categorization.confidence,
+    };
+    categorization = cat.categorization;
   } else {
     const analysis = await analyzeDocument({
       sourceUrl: url,
@@ -379,21 +413,25 @@ async function processDiscoveredDoc(
       return { kind: 'error', message: 'Analysis failed' };
     }
     resolved = analysis;
+    categorization = {
+      method: 'ai',
+      source_tags: doc.tags ?? [],
+      matched: analysis.categories.map((slug) => ({ category_slug: slug })),
+      confidence: analysis.confidence,
+      rationale: analysis.summary ? `AI categorization: ${analysis.summary}` : 'AI categorization via Claude.',
+    };
   }
 
-  // f. PDF sanity check — thin/unreadable text forces review regardless of trust.
+  // g. PDF sanity check — thin/unreadable text forces review regardless of trust.
   let needsReview = false;
   let needsReviewReason: string | undefined;
-  if (isPdf) {
-    const sanity = await sanityCheckPdfText(bytes);
-    if (!sanity.ok) {
-      needsReview = true;
-      needsReviewReason = `PDF text extraction yielded only ${sanity.length} chars (< ${MIN_PDF_TEXT_CHARS})`;
-      ctx.log('warn', needsReviewReason, { url });
-    }
+  if (isPdf && pdfTextLength < MIN_PDF_TEXT_CHARS) {
+    needsReview = true;
+    needsReviewReason = `PDF text extraction yielded only ${pdfTextLength} chars (< ${MIN_PDF_TEXT_CHARS})`;
+    ctx.log('warn', needsReviewReason, { url });
   }
 
-  // g. Upload PDF to Storage if applicable
+  // h. Upload PDF to Storage if applicable
   let storagePath: string | null = null;
   if (isPdf) {
     // Path: <source-slug>/<yyyy>/<hash>.pdf — hash prevents collisions
@@ -426,6 +464,7 @@ async function processDiscoveredDoc(
     status,
     file_path: storagePath,
     external_url: url,
+    categorization: categorization as unknown as Json,
     metadata: {
       scraper: {
         source_url: url,
@@ -441,7 +480,7 @@ async function processDiscoveredDoc(
     },
   };
 
-  // h. Insert or update
+  // i. Insert or update
   if (existing) {
     const { error: updErr } = await supabase
       .from('documents')
@@ -494,7 +533,7 @@ async function processDiscoveredDoc(
  * Import a single URL as a document (the "manual_import" path).
  * Reuses the same pipeline as a crawler run but only processes one doc.
  * There's no adapter involved, so this always goes through the AI fallback
- * (no categorySlug can be known for a bare pasted URL).
+ * (a bare pasted URL is never marked `structured`).
  */
 export async function importSingleUrl(opts: {
   sourceId: string;
@@ -519,8 +558,7 @@ export async function importSingleUrl(opts: {
   const runId = runRow?.id;
   if (!runId) return { runId: '', documentId: null, error: 'Failed to create run' };
 
-  const { data: categories } = await supabase
-    .from('categories').select('id, slug, name, name_en');
+  const rules = await loadRules(supabase);
 
   const config: ScrapeConfig = (source.scrape_config as ScrapeConfig) || {};
   const controller = new AbortController();
@@ -536,7 +574,7 @@ export async function importSingleUrl(opts: {
     { url: opts.url },
     source as Source,
     runId,
-    categories || [],
+    rules,
     ctx,
   );
 

@@ -145,6 +145,7 @@ export interface Database {
           language: string;
           reference_code: string | null;
           source_ref: string | null;
+          categorization: Json;
           version: string | null;
           published_date: string | null;
           access_level: 'open' | 'internal' | 'restricted' | 'paid';
@@ -177,6 +178,36 @@ export interface Database {
           category_id: string;
         };
         Update: Partial<Database['public']['Tables']['document_categories']['Row']>;
+        Relationships: [];
+      };
+      category_tag_rules: {
+        Row: {
+          id: string;
+          source_tag: string;
+          category_slug: string;
+          priority: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['category_tag_rules']['Row']> & {
+          source_tag: string;
+          category_slug: string;
+        };
+        Update: Partial<Database['public']['Tables']['category_tag_rules']['Row']>;
+        Relationships: [];
+      };
+      category_keywords: {
+        Row: {
+          id: string;
+          keyword: string;
+          category_slug: string;
+          weight: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['category_keywords']['Row']> & {
+          keyword: string;
+          category_slug: string;
+        };
+        Update: Partial<Database['public']['Tables']['category_keywords']['Row']>;
         Relationships: [];
       };
     };
