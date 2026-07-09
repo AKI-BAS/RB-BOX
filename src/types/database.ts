@@ -163,6 +163,21 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['documents']['Row']>;
         Relationships: [];
       };
+      document_categories: {
+        Row: {
+          id: string;
+          document_id: string;
+          category_id: string;
+          is_primary: boolean;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['document_categories']['Row']> & {
+          document_id: string;
+          category_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['document_categories']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -176,12 +191,13 @@ export interface Database {
         Returns: Database['public']['Tables']['sources']['Row'][];
       };
     };
-    Enums: {
+   Enums: {
       user_role: 'viewer' | 'contributor' | 'admin';
       access_level: 'open' | 'internal' | 'restricted' | 'paid';
       document_type: 'rb_blad' | 'leidbeining' | 'rannsokn' | 'handbok' | 'annad';
       doc_status: 'draft' | 'pending_review' | 'published' | 'archived';
     };
+    CompositeTypes: Record<string, never>;
   };
 }
 

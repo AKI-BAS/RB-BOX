@@ -1,10 +1,12 @@
 'use client';
 
 import { t, type Lang } from '@/lib/i18n';
-import type { Source, Category } from '@/types/database';
+import type { Source, Category, Database } from '@/types/database';
+
+type AccessLevel = Database['public']['Tables']['documents']['Row']['access_level'];
 
 export interface Filters {
-  access: Set<string>;
+  access: Set<AccessLevel>;
   sources: Set<string>;
   category: string | null;
 }
@@ -27,6 +29,13 @@ const ACCESS_LEVELS: Array<{
   { key: 'restricted' },
   { key: 'paid' },
 ];
+
+function toggle<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
 
 function CheckSquare({ checked }: { checked: boolean }) {
   return (
@@ -55,12 +64,6 @@ export function BrowsePanel({
   onChange,
   onClose,
 }: BrowsePanelProps) {
-  function toggle(set: Set<string>, value: string): Set<string> {
-    const next = new Set(set);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    return next;
-  }
 
   const activeCount =
     filters.access.size +

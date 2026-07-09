@@ -49,7 +49,7 @@ export default function HomePage() {
   const [totalDocs, setTotalDocs] = useState<number>(0);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({
-    access: new Set<string>(),
+    access: new Set(),
     sources: new Set<string>(),
     category: null,
   });

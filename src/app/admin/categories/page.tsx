@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import type { Category } from '@/types/database';
+import type { Category, Database } from '@/types/database';
 
 export default function AdminCategoriesPage() {
   const [cats, setCats] = useState<Category[]>([]);
@@ -21,13 +21,14 @@ export default function AdminCategoriesPage() {
     const parent = cats.find((c) => c.id === form.parent_id);
     // path = parent.path + '.' + slug   (or just slug for roots)
     const path = parent ? `${parent.path}.${form.slug}` : form.slug;
-    await supabase.from('categories').insert({
+    const insertPayload: Database['public']['Tables']['categories']['Insert'] = {
       slug: parent ? `${parent.slug}.${form.slug}` : form.slug,
       path,
       name: form.name,
       name_en: form.name_en || null,
       parent_id: form.parent_id || null,
-    });
+    };
+    await supabase.from('categories').insert(insertPayload);
     setForm({ slug: '', name: '', name_en: '', parent_id: '' });
     load();
   }
