@@ -1,15 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { usernameToEmail } from '@/lib/auth';
 import { t, type Lang } from '@/lib/i18n';
 
-export default function LoginPage() {
-  const router = useRouter();
+function useNextParam(): string {
   const params = useSearchParams();
-  const next = params.get('next') || '/';
+  return params.get('next') || '/';
+}
+
+function LoginPageInner() {
+  const router = useRouter();
+  const next = useNextParam();
 
   const [lang, setLang] = useState<Lang>('is');
   const [username, setUsername] = useState('');
@@ -171,5 +175,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
   );
 }
