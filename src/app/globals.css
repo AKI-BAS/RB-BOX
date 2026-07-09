@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Light theme (default) */
+html {
+  color-scheme: light;
+  background: #FAFAF7;
+  color: #2C2C2A;
+}
+
+html.dark {
+  color-scheme: dark;
+  background: #141416;
+  color: #EDEDE8;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Utility: keyboard shortcut style */
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 5px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  color: #5F5E5A;
+}
+.dark kbd {
+  background: rgba(255, 255, 255, 0.08);
+  color: #A0A099;
+}
+
+/* Focus rings — brick red */
+*:focus-visible {
+  outline: 2px solid #A32D2D;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbar polish (webkit only) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 6px; }
+.dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* AI badge — small chip next to labels of fields Claude filled in */
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 5px 2px 4px;
+  border-radius: 3px;
+  color: #A32D2D;
+  background: rgba(163, 45, 45, 0.08);
+  vertical-align: 1px;
+}
+.dark .ai-badge {
+  color: #F09595;
+  background: rgba(240, 149, 149, 0.14);
+}
+
+/* Section label — reused in browse panel + form fieldsets */
+.section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 500;
+  color: #8A8985;
+}
+.dark .section-label { color: #85847F; }
+
+/* Highlight for search terms in "Matched on" line */
+.match-term {
+  color: #A32D2D;
+  font-weight: 500;
+}
+.dark .match-term { color: #F09595; }
