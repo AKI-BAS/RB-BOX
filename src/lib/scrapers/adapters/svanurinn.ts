@@ -1,4 +1,4 @@
-import type { Adapter } from '../types';
+import type { ScraperAdapter } from '../types';
 import { crawlForDocuments } from '../html-crawl';
 
 /**
@@ -9,7 +9,7 @@ import { crawlForDocuments } from '../html-crawl';
  * reports. Their structure is criteria-focused: /vorur/ (products), /bygging/
  * (construction), etc.
  */
-const svanurinn: Adapter = {
+const svanurinn: ScraperAdapter = {
   slug: 'svanurinn',
   name: 'Svanurinn',
 
@@ -22,7 +22,7 @@ const svanurinn: Adapter = {
       denyPatterns: ['/en/', '/frettir/', '/starf/', '/hafa-samband/'],
       maxDepth: 2,
       hintFromAnchor: (text) => ({
-        titleHint: text.trim() || undefined,
+        title: text.trim() || undefined,
         documentType: /kröfur|criteria/i.test(text) ? 'leidbeining' : 'handbok',
         language: 'is',
       }),

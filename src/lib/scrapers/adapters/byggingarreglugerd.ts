@@ -1,4 +1,4 @@
-import type { Adapter } from '../types';
+import type { ScraperAdapter } from '../types';
 import { crawlForDocuments } from '../html-crawl';
 
 /**
@@ -11,7 +11,7 @@ import { crawlForDocuments } from '../html-crawl';
  *
  * We only walk within the /leidbeiningagatt subtree to keep the crawl focused.
  */
-const byggingarreglugerd: Adapter = {
+const byggingarreglugerd: ScraperAdapter = {
   slug: 'byggingarreglugerd',
   name: 'Byggingarreglugerð',
 
@@ -28,8 +28,8 @@ const byggingarreglugerd: Adapter = {
         // Reference codes on this site are the standard §X.Y.Z form
         const codeMatch = /^\s*(\d+(?:\.\d+){1,3})/.exec(trimmed);
         return {
-          titleHint: trimmed || undefined,
-          externalId: codeMatch?.[1],
+          title: trimmed || undefined,
+          sourceRef: codeMatch?.[1],
           documentType: 'leidbeining',
           language: 'is',
         };

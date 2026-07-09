@@ -1,4 +1,4 @@
-import type { Adapter } from '../types';
+import type { ScraperAdapter } from '../types';
 import { crawlForDocuments } from '../html-crawl';
 
 /**
@@ -13,7 +13,7 @@ import { crawlForDocuments } from '../html-crawl';
  * document-page heuristic to those subtrees so we don't accidentally import
  * category listing pages.
  */
-const taktak: Adapter = {
+const taktak: ScraperAdapter = {
   slug: 'taktak',
   name: 'Taktak',
 
@@ -31,7 +31,7 @@ const taktak: Adapter = {
         /\/grein\//.test(url) || /\/leidbeining\//.test(url) || /\/handbok\//.test(url),
 
       hintFromAnchor: (text) => ({
-        titleHint: text.trim() || undefined,
+        title: text.trim() || undefined,
         language: 'is',
       }),
     });

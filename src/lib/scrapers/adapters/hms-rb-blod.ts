@@ -1,104 +1,159 @@
-import type { Adapter, Candidate, ScraperContext } from '../types';
+import { createClient } from '@prismicio/client';
+import type { Client, PrismicDocument } from '@prismicio/client';
+import type { DiscoveredDoc, ScraperAdapter, ScraperContext } from '../types';
 
 /**
- * HMS Rb-leiðbeiningablöð (via Prismic API).
+ * HMS Rb-leiðbeiningablöð (via Prismic Content API).
  *
- * hms.is is a Next.js + Prismic-headless-CMS site. The public listing pages
- * are entirely JavaScript-rendered — HTML crawlers see an empty shell. Rather
- * than fight that with a headless browser, we go straight to the underlying
- * data source: Prismic's public REST API. It:
- *
- *   • Returns clean JSON with all document metadata
- *   • Allows 200 req/sec (vs. the front-end's aggressive rate-limiting)
- *   • Provides publication dates, categories (tags), and direct PDF URLs
+ * hms.is is a Next.js + Prismic-headless-CMS site. The public listing page
+ * (utgafusafn-rb) is entirely JavaScript-rendered — an HTML/Cheerio crawler
+ * sees an empty table. Rather than run a headless browser, we go straight to
+ * Prismic's public Content API, which returns clean structured JSON: title,
+ * tags, a version/date field, and a direct PDF link for every Rb blað.
  *
  * The Prismic repository name is `hms-web` (visible in image URLs on hms.is:
  * `images.prismic.io/hms-web/…`). Public repositories don't need an access
- * token for master-ref queries.
+ * token to query the master ref.
+ *
+ * VERIFIED against the live repo (381 documents, checked 2026-07-09 — see
+ * field-path notes below). Custom type is `document`, not the `Rb-blöð`
+ * hyphenated string originally assumed:
+ *
+ *   • Tag is exactly "RB Blöð" (space, title case) — NOT "Rb-blöð". Querying
+ *     "Rb-blöð" (the old default) matched only 3 unrelated narrative articles
+ *     of a different custom type ("monthly_report") that happened to carry a
+ *     stray legacy tag of that spelling — not the actual archive.
+ *   • doc.type === "document" for every real Rb blað. Tag-only search (no
+ *     type filter) returns 400 docs; only 381 of those are type "document"
+ *     with the schema below — the other 19 are unrelated content tagged
+ *     "RB Blöð" by mistake elsewhere on the site. We filter by type as a
+ *     defensive guard after the tag query.
+ *   • doc.uid is always null for this type — do NOT use it as a fallback key
+ *     (the original `HMS-{uid}` fallback would produce "HMS-null" for every
+ *     document). Use doc.id (Prismic's globally unique id) instead.
+ *   • data.title — rich text (heading1), e.g. "Ljósvist - almenn atriði".
+ *   • data.date — plain string field, already "YYYY-MM-DD". Not rich text.
+ *   • data.version — free-text field, present on ~most docs, absent (null)
+ *     on some. Two rough shapes seen: "<chapter> / <number>" (e.g.
+ *     "31 / 104.2", "Yt4 / 005") and a bare legacy bulletin number (e.g.
+ *     "78", "95"). The PDF itself prints this as "Númer: (99) 26 01 15" —
+ *     confirmed by downloading and pdf-parsing a real file — so `version` is
+ *     the genuine source_ref basis, not a title-embedded "Rb NN.NNN" code
+ *     (0/381 titles matched that pattern; the doc titles are plain Icelandic
+ *     phrases with no code in them at all).
+ *   • data.file — Media link field, single well-typed object:
+ *       { link_type: "Media", kind: "file", id, url, name, size }
+ *     100% of the 381 documents have this field populated. No nesting, no
+ *     per-custom-type variance — `data.file` is used directly. The generic
+ *     recursive walker is kept only as a defensive fallback in case a future
+ *     document uses a differently-named field.
+ *   • No description/summary field exists on this custom type.
+ *
+ * Because this source gives us real category + title + tag data, discovered
+ * docs come back with `categorySlug` populated where we have a confident tag
+ * mapping — the runner skips the Claude categorizer entirely for this
+ * adapter and inserts documents straight from this metadata (see runner.ts's
+ * "structured" path).
  *
  * See: https://prismic.io/docs/content-api
  */
 
-interface PrismicApiMeta {
-  refs: Array<{ id: string; ref: string; label: string; isMasterRef?: boolean }>;
-  tags: string[];
-  types: Record<string, string>;
+interface RbConfig {
+  prismic_repo?: string;
+  tag?: string;
+  lang?: string;
+  page_size?: number;
 }
 
-interface PrismicDoc {
-  id: string;
-  uid?: string;
-  url?: string | null;
-  type: string;
-  href: string;
-  tags: string[];
-  first_publication_date: string;
-  last_publication_date: string;
-  slugs: string[];
-  lang: string;
-  data: Record<string, unknown>;
-}
-
-interface PrismicSearchResult {
-  page: number;
-  results_per_page: number;
-  results_size: number;
-  total_results_size: number;
-  total_pages: number;
-  next_page: string | null;
-  prev_page: string | null;
-  results: PrismicDoc[];
-}
+// RB-BOX category slugs (from categories seed migration), for reference:
+//   steypa, einangrun, thok, burdarvirki, lagnir, rafmagn, brunavarnir,
+//   hljodvist, vinnuvernd, umhverfismal
+//
+// Tag frequency across all 381 live "RB Blöð" documents (checked 2026-07-09),
+// most → least common: Byggingarvörur(124), Byggingarhlutar(88),
+// Verkþættir og þarfir(81), Sérrit(54), Timbur(29), Byggingartimbur(28),
+// Hlutvörur(27), Steypa(27), Tré(24), "Þök, veggir og gólf"(23),
+// Reynslublöð(23), Klæðningar(21), "Ýmsir byggingarhlutar"(21),
+// "Hreinlætis-, hita-, og loftræstibúnaður"(20), "Áhrif vatns og vinda"(19),
+// Flísar(17), Klæðning(17), Magnvörur(16), innréttingar(16), "Hljóð o.fl."(15),
+// "Hljóð og hljómburður"(15), Hleðslusteinar(14), "Almennar þarfir"(13),
+// Kröfur(13), ... Einangrun(6), Einangrunarefni(4), Burður(3), "Lóð og lagnir"(2),
+// Steinsteypa(2), "raflagnir og rafbúnaður"(1).
+//
+// Most of that vocabulary classifies by *material/product type*
+// (Byggingarvörur, Timbur, Flísar, Málningarvörur…) or is too generic
+// (Byggingarhlutar, "Verkþættir og þarfir", Sérrit) to safely bucket into
+// RB-BOX's *subject* categories — mapping those would guess wrong more often
+// than it'd help, so they're deliberately left unmapped (categorySlug stays
+// undefined; the doc still imports, just uncategorized). Only tags with an
+// unambiguous, near-literal match to an existing category slug are mapped:
+const PRISMIC_TAG_CATEGORY_MAP: Record<string, string> = {
+  'Steypa': 'steypa',
+  'Steinsteypa': 'steypa',
+  'Einangrun': 'einangrun',
+  'Einangrunarefni': 'einangrun',
+  'Burður': 'burdarvirki',
+  'Þök, veggir og gólf': 'thok', // compound tag (roofs+walls+floors) — best-effort, roofs named first
+  'Hljóð o.fl.': 'hljodvist',
+  'Hljóð og hljómburður': 'hljodvist',
+  'Lóð og lagnir': 'lagnir',
+  'Hreinlætis-, hita-, og loftræstibúnaður': 'lagnir', // sanitary/heating/ventilation — closest existing category
+  'raflagnir og rafbúnaður': 'rafmagn',
+};
 
 /**
- * Walk arbitrary Prismic data looking for a Media field whose URL points at
- * a PDF. Prismic's file-link shape is stable across all content types:
- *   { link_type: "Media", kind: "document", url: "https://…", name: "foo.pdf" }
- * So we recurse into the doc.data tree and pluck the first match.
+ * Prismic's link-to-media shape is stable across custom types:
+ *   { link_type: "Media", kind: "file"|"document", url: "https://…", name: "foo.pdf" }
+ * Verified: every real Rb blað has this at the top-level `data.file` field
+ * (see module doc comment). Try that exact path first; fall back to a
+ * recursive walk for resilience against future schema drift or a
+ * differently-shaped document.
  */
-function findPdfUrl(node: unknown): { url: string; name?: string } | null {
+function findPdfUrl(data: Record<string, unknown>): { url: string; name?: string } | null {
+  const direct = data.file as Record<string, unknown> | undefined;
+  if (direct && typeof direct === 'object' && typeof direct.url === 'string') {
+    return { url: direct.url, name: typeof direct.name === 'string' ? direct.name : undefined };
+  }
+  return walkForPdfUrl(data);
+}
+
+function walkForPdfUrl(node: unknown): { url: string; name?: string } | null {
   if (!node || typeof node !== 'object') return null;
   const obj = node as Record<string, unknown>;
 
-  if (
-    obj.link_type === 'Media' &&
-    typeof obj.url === 'string' &&
-    /\.pdf(\?|$)/i.test(obj.url)
-  ) {
+  if (typeof obj.url === 'string' && (/\.pdf(\?|$)/i.test(obj.url) || obj.link_type === 'Media')) {
     return { url: obj.url, name: typeof obj.name === 'string' ? obj.name : undefined };
   }
 
   for (const value of Object.values(obj)) {
     if (Array.isArray(value)) {
       for (const item of value) {
-        const found = findPdfUrl(item);
+        const found = walkForPdfUrl(item);
         if (found) return found;
       }
     } else if (value && typeof value === 'object') {
-      const found = findPdfUrl(value);
+      const found = walkForPdfUrl(value);
       if (found) return found;
     }
   }
   return null;
 }
 
-/**
- * Prismic "Rich Text" fields are arrays of blocks. Flatten to plain text.
- * Also handles the simple case where a title is just a string.
- */
+/** Prismic "Rich Text" fields are arrays of blocks. Flatten to plain text. */
 function extractText(node: unknown): string | undefined {
   if (typeof node === 'string') return node;
   if (!Array.isArray(node)) return undefined;
   return node
-    .map((block: any) => (typeof block?.text === 'string' ? block.text : ''))
+    .map((block) => (block && typeof block === 'object' && typeof (block as { text?: unknown }).text === 'string'
+      ? (block as { text: string }).text
+      : ''))
     .filter(Boolean)
     .join(' ')
     .trim() || undefined;
 }
 
-/** Find the best title candidate from a Prismic doc's data blob. */
+/** Verified: data.title (rich text, heading1). Other keys kept as a fallback only. */
 function extractTitle(data: Record<string, unknown>): string | undefined {
-  // Prismic UIs commonly name it "title", "name", or "heading" — try each
   for (const key of ['title', 'heading', 'name', 'nafn', 'titill']) {
     const text = extractText(data[key]);
     if (text) return text;
@@ -106,104 +161,129 @@ function extractTitle(data: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-async function fetchMasterRef(ctx: ScraperContext, apiRoot: string): Promise<string | null> {
-  const res = await ctx.fetch(apiRoot);
-  if (!res.ok) {
-    ctx.log('warn', `Prismic API meta returned HTTP ${res.status}`, { url: apiRoot });
-    return null;
+/** Verified: this custom type has no description/summary field. Kept as a harmless no-op fallback. */
+function extractDescription(data: Record<string, unknown>): string | undefined {
+  for (const key of ['description', 'summary', 'lysing', 'samantekt']) {
+    const text = extractText(data[key]);
+    if (text) return text;
   }
-  const meta = (await res.json()) as PrismicApiMeta;
-  const master = meta.refs.find((r) => r.isMasterRef) ?? meta.refs.find((r) => r.id === 'master');
-  if (!master) {
-    ctx.log('warn', 'No master ref found in Prismic API meta');
-    return null;
-  }
-  return master.ref;
+  return undefined;
 }
 
-const hmsRbBlod: Adapter = {
+// Matches the two `data.version` shapes seen live: "<chapter> / <number>"
+// (e.g. "31 / 104.2", "Yt4 / 005") and a bare legacy bulletin number ("78").
+const VERSION_SPLIT_RE = /^\s*([A-Za-zÁÉÍÓÚÝÞÆÖáéíóúýþæö0-9]+)\s*\/\s*(\d+(?:\.\d+)*)\s*$/;
+const VERSION_BARE_RE = /^\s*(\d+)\s*$/;
+
+/**
+ * Derive a stable source_ref from `data.version`. Falls back to `HMS-{id}`
+ * (Prismic's document id — uid is always null for this type, verified) when
+ * version is missing or doesn't match either known shape.
+ */
+function deriveSourceRef(version: unknown, docId: string): string {
+  if (typeof version === 'string' && version.trim()) {
+    const split = VERSION_SPLIT_RE.exec(version);
+    if (split) return `RB(${split[1]}).${split[2]}`;
+    const bare = VERSION_BARE_RE.exec(version);
+    if (bare) return `RB-Nr.${bare[1]}`;
+  }
+  return `HMS-${docId}`;
+}
+
+/** First doc tag (besides the discovery tag itself) that maps to a known category. */
+function resolveCategorySlug(tags: string[]): string | undefined {
+  for (const tag of tags) {
+    const slug = PRISMIC_TAG_CATEGORY_MAP[tag];
+    if (slug) return slug;
+  }
+  return undefined;
+}
+
+const hmsRbBlod: ScraperAdapter = {
   slug: 'hms-rb-blod',
   name: 'HMS · Rb-leiðbeiningablöð',
 
-  async *discover(ctx) {
-    interface RbConfig {
-      prismic_repo?: string;
-      tag?: string;
-      lang?: string;
-      page_size?: number;
-    }
+  async *discover(ctx: ScraperContext): AsyncIterable<DiscoveredDoc> {
     const config = ctx.config as RbConfig;
-
     const repo = config.prismic_repo ?? 'hms-web';
-    const apiRoot = `https://${repo}.cdn.prismic.io/api/v2`;
-    const tag = config.tag ?? 'Rb-blöð';
+    const tag = config.tag ?? 'RB Blöð';
     const lang = config.lang ?? '*'; // '*' = all languages
     const pageSize = Math.min(config.page_size ?? 100, 100); // Prismic max is 100
-
-    // Step 1: fetch master ref (required for every query)
-    const ref = await fetchMasterRef(ctx, apiRoot);
-    if (!ref) return;
-
-    // Step 2: paginated query filtered by tag
-    // Query shape (unencoded): [[at(document.tags,["Rb-blöð"])]]
-    const predicate = `[[at(document.tags,["${tag}"])]]`;
-    let page = 1;
-    let totalYielded = 0;
     const maxYield = ctx.config.max_docs_per_run ?? 200;
 
-    while (true) {
+    // Route Prismic's HTTP calls through the runner's polite fetcher, so the
+    // 1 req/sec throttle, robots.txt check, and RB-BOX User-Agent all apply
+    // exactly as they do for every other adapter.
+    const client: Client<PrismicDocument> = createClient(repo, {
+      fetch: ctx.fetch,
+    });
+
+    let allTagged: PrismicDocument[];
+    try {
+      allTagged = await client.getAllByTag(tag, {
+        pageSize,
+        lang: lang === '*' ? undefined : lang,
+        orderings: ['document.first_publication_date desc'],
+      });
+    } catch (err) {
+      ctx.log('error', `Prismic query failed: ${err instanceof Error ? err.message : String(err)}`, {
+        repo,
+        tag,
+      });
+      return;
+    }
+
+    // Verified: the tag alone also catches ~19 unrelated documents of other
+    // custom types. Only "document" has the file/title/version/date schema
+    // this adapter expects.
+    const docs = allTagged.filter((d) => d.type === 'document');
+    ctx.log(
+      'info',
+      `Prismic returned ${allTagged.length} documents tagged "${tag}" (${docs.length} of type "document")`,
+    );
+
+    let yielded = 0;
+    for (const doc of docs) {
       if (ctx.signal.aborted) return;
+      if (yielded >= maxYield) return;
 
-      const url = new URL(`${apiRoot}/documents/search`);
-      url.searchParams.set('ref', ref);
-      url.searchParams.set('q', predicate);
-      url.searchParams.set('pageSize', String(pageSize));
-      url.searchParams.set('page', String(page));
-      if (lang !== '*') url.searchParams.set('lang', lang);
-      url.searchParams.set(
-        'orderings',
-        '[document.first_publication_date desc]',
-      );
-
-      const res = await ctx.fetch(url.toString());
-      if (!res.ok) {
-        ctx.log('warn', `Prismic search HTTP ${res.status}`, { url: url.toString() });
-        return;
+      const data = doc.data as Record<string, unknown>;
+      const pdf = findPdfUrl(data);
+      if (!pdf) {
+        ctx.log('warn', `No PDF field found on Prismic doc, skipping`, { id: doc.id });
+        continue;
       }
-      const result = (await res.json()) as PrismicSearchResult;
 
-      if (page === 1) {
+      const title = extractTitle(data) ?? pdf.name?.replace(/\.[^.]+$/, '') ?? doc.id;
+      const language: 'is' | 'en' = doc.lang?.startsWith('en') ? 'en' : 'is';
+      const categorySlug = resolveCategorySlug(doc.tags ?? []);
+      const sourceRef = deriveSourceRef(data.version, doc.id);
+      const publishedAt = typeof data.date === 'string' && data.date
+        ? data.date
+        : doc.first_publication_date?.slice(0, 10);
+
+      if (!categorySlug) {
         ctx.log(
-          'info',
-          `Prismic returned ${result.total_results_size} Rb blöð across ${result.total_pages} pages`,
+          'warn',
+          `No category mapping for tags [${(doc.tags ?? []).join(', ')}] — importing without a category`,
+          { id: doc.id, sourceRef },
         );
       }
 
-      for (const doc of result.results) {
-        if (ctx.signal.aborted) return;
-        if (totalYielded >= maxYield) return;
+      const discovered: DiscoveredDoc = {
+        url: pdf.url,
+        sourceRef,
+        title,
+        categorySlug,
+        language,
+        tags: (doc.tags ?? []).filter((t) => t !== tag).map((t) => t.toLowerCase()),
+        publishedAt,
+        description: extractDescription(data),
+        documentType: 'rb_blad',
+      };
 
-        // The document may point at a PDF (the actual RB blað file), or it
-        // may be a container page describing the sheet. Prefer the PDF.
-        const pdf = findPdfUrl(doc.data);
-        const title = extractTitle(doc.data) ?? doc.uid ?? doc.slugs[0];
-        const language: 'is' | 'en' = doc.lang?.startsWith('en') ? 'en' : 'is';
-
-        const candidate: Candidate = {
-          url: pdf?.url ?? new URL(doc.url ?? `/${doc.slugs[0] ?? doc.uid ?? ''}`, 'https://hms.is').toString(),
-          titleHint: pdf?.name?.replace(/\.[^.]+$/, '') || title,
-          externalId: doc.uid,
-          publishedDate: doc.first_publication_date?.slice(0, 10),
-          documentType: 'rb_blad',
-          language,
-        };
-
-        yield candidate;
-        totalYielded++;
-      }
-
-      if (!result.next_page || result.results.length === 0 || page >= result.total_pages) break;
-      page++;
+      yield discovered;
+      yielded++;
     }
   },
 };

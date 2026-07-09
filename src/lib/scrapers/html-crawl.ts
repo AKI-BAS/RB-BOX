@@ -18,7 +18,7 @@
  * discover() instead of using this helper.
  */
 
-import type { Candidate, ScraperContext } from './types';
+import type { DiscoveredDoc, ScraperContext } from './types';
 import { looksLikeDocument, normalizeUrl, resolveUrl } from './fetch-utils';
 
 interface CrawlOptions {
@@ -29,7 +29,7 @@ interface CrawlOptions {
   /** If the caller wants HTML pages themselves treated as documents. */
   isDocumentPage?: (url: string, html: string) => boolean;
   /** Extract a title hint + optional metadata from an HTML doc's anchor context. */
-  hintFromAnchor?: (anchorText: string, href: string) => Partial<Candidate>;
+  hintFromAnchor?: (anchorText: string, href: string) => Partial<DiscoveredDoc>;
 }
 
 const LINK_RE = /<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -61,7 +61,7 @@ function pageTitle(html: string): string | undefined {
 export async function* crawlForDocuments(
   ctx: ScraperContext,
   opts: CrawlOptions,
-): AsyncIterable<Candidate> {
+): AsyncIterable<DiscoveredDoc> {
   const maxDepth = opts.maxDepth ?? 2;
   const denyRegexes = (opts.denyPatterns || []).map((p) => new RegExp(p, 'i'));
   const seen = new Set<string>();
@@ -115,7 +115,7 @@ export async function* crawlForDocuments(
     // If the caller says this whole HTML page IS a document (e.g. an article to import),
     // yield it once and don't extract child docs from it.
     if (opts.isDocumentPage?.(item.url, html)) {
-      yield { url: item.url, titleHint: pageTitle(html) };
+      yield { url: item.url, title: pageTitle(html) };
       continue;
     }
 
@@ -144,7 +144,7 @@ export async function* crawlForDocuments(
         const hint = opts.hintFromAnchor?.(anchorText, nextUrl) ?? {};
         yield {
           url: nextUrl,
-          titleHint: anchorText || hint.titleHint,
+          title: anchorText || hint.title,
           ...hint,
         };
         seen.add(nextUrl);

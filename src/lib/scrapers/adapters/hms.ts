@@ -1,4 +1,4 @@
-import type { Adapter } from '../types';
+import type { ScraperAdapter } from '../types';
 import { crawlForDocuments } from '../html-crawl';
 
 /**
@@ -14,7 +14,7 @@ import { crawlForDocuments } from '../html-crawl';
  * We use that anchor text as the title hint so Claude has good context even
  * before opening the PDF.
  */
-const hms: Adapter = {
+const hms: ScraperAdapter = {
   slug: 'hms',
   name: 'Húsnæðis- og mannvirkjastofnun',
 
@@ -44,8 +44,8 @@ const hms: Adapter = {
         // Match reference codes like "6.6.1" or "Leiðbeining 6.6.1"
         const codeMatch = /(?:Leiðbeining\s+)?(\d+(?:\.\d+)+)/i.exec(trimmed);
         return {
-          titleHint: trimmed || undefined,
-          externalId: codeMatch?.[1],
+          title: trimmed || undefined,
+          sourceRef: codeMatch?.[1],
           documentType: /brunahönn|brunavarnir|brunatechni/i.test(trimmed)
             ? 'leidbeining'
             : 'leidbeining',

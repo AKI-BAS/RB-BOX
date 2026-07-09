@@ -144,6 +144,7 @@ export interface Database {
           document_type: 'rb_blad' | 'leidbeining' | 'rannsokn' | 'handbok' | 'annad';
           language: string;
           reference_code: string | null;
+          source_ref: string | null;
           version: string | null;
           published_date: string | null;
           access_level: 'open' | 'internal' | 'restricted' | 'paid';

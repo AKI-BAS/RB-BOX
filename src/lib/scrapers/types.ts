@@ -1,30 +1,56 @@
 /**
  * Scraper framework types.
  *
- * The runner drives the pipeline (discover → fetch → analyze → store).
- * Each adapter only needs to implement `discover`, which yields candidate
- * document URLs. Everything else is uniform across sources.
+ * The runner drives the pipeline (discover → fetch → sanity-check → store).
+ * Adapters implement `discover`, which yields `DiscoveredDoc`s.
+ *
+ * Two discovery styles are supported:
+ *   • Structured adapters (e.g. hms-rb-blod, backed by a CMS's content API)
+ *     can populate `categorySlug` (and ideally `tags`/`description`). When a
+ *     discovered doc carries a `categorySlug`, the runner treats it as
+ *     self-describing and skips the Claude categorizer entirely.
+ *   • Unstructured/crawler adapters (HTML link-following) generally can't
+ *     know the category from a listing page — they leave `categorySlug`
+ *     unset and the runner falls back to AI analysis, same as before.
  */
 
 import type { Database } from '@/types/database';
 
 export type Source = Database['public']['Tables']['sources']['Row'];
 
-/** A document URL discovered by an adapter. */
-export interface Candidate {
+/** A document discovered by an adapter. */
+export interface DiscoveredDoc {
   /** Absolute URL of the document (PDF, HTML page, etc.) */
   url: string;
-  /** Optional pre-extracted title from the listing page. */
-  titleHint?: string;
-  /** Optional document reference code (e.g. "RB.31.101.03"). */
-  externalId?: string;
-  /** ISO date if the listing page shows a publication date. */
-  publishedDate?: string;
+  /**
+   * Stable identifier for this doc within its source, independent of URL
+   * (e.g. "RB(31).101", "HMS-abc123"). Used for dedup — a document with the
+   * same (source_id, source_ref) is updated in place rather than
+   * re-inserted, even if the underlying file URL changes. Also stored as
+   * documents.reference_code when set.
+   */
+  sourceRef?: string;
+  /** Pre-extracted title, if the adapter knows it without opening the doc. */
+  title?: string;
+  /**
+   * Category slug the adapter is confident about (must match categories.slug).
+   * When present, the runner skips the Claude categorizer for this doc.
+   */
+  categorySlug?: string;
   /** Language hint if the adapter knows. */
   language?: 'is' | 'en';
+  /** Free-text tags/keywords carried over from the source site, if any. */
+  tags?: string[];
+  /** ISO date if the listing page shows a publication date. */
+  publishedAt?: string;
+  /** Short description/summary, if the source provides one. */
+  description?: string;
   /** Suggested document type. */
   documentType?: 'rb_blad' | 'leidbeining' | 'rannsokn' | 'handbok' | 'annad';
 }
+
+/** @deprecated use DiscoveredDoc — kept as an alias so older adapter code keeps compiling. */
+export type Candidate = DiscoveredDoc;
 
 /** Config stored in `sources.scrape_config` (jsonb). */
 export interface ScrapeConfig {
@@ -38,6 +64,8 @@ export interface ScrapeConfig {
   max_docs_per_run?: number;
   /** Max crawl depth for HTML-following adapters. Default 2. */
   max_depth?: number;
+  /** Adapter-specific extra config (e.g. Prismic repo/tag). Adapters cast this themselves. */
+  [key: string]: unknown;
 }
 
 /** Runtime context passed to every adapter. */
@@ -55,19 +83,23 @@ export interface ScraperContext {
 }
 
 /** What every adapter exports. */
-export interface Adapter {
+export interface ScraperAdapter {
   /** Must match sources.slug. */
   slug: string;
   /** Human name for logs. */
   name: string;
   /**
-   * Yield candidate documents. The runner handles fetch/analyze/store per candidate,
-   * so adapters just need to walk the source's structure and emit URLs.
+   * Yield discovered documents. The runner handles fetch/analyze/store per
+   * doc, so adapters just need to walk the source's structure and emit
+   * `DiscoveredDoc`s — with as much structured metadata as they can supply.
    */
-  discover(ctx: ScraperContext): AsyncIterable<Candidate>;
+  discover(ctx: ScraperContext): AsyncIterable<DiscoveredDoc>;
 }
 
-/** Result of processing one candidate through the pipeline. */
+/** @deprecated use ScraperAdapter */
+export type Adapter = ScraperAdapter;
+
+/** Result of processing one discovered doc through the pipeline. */
 export type CandidateResult =
   | { kind: 'added'; documentId: string }
   | { kind: 'updated'; documentId: string }

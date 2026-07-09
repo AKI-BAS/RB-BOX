@@ -11,7 +11,7 @@
  * but no code adapter is a config bug we want to surface loudly.
  */
 
-import type { Adapter } from './types';
+import type { ScraperAdapter } from './types';
 
 import hms from './adapters/hms';
 import hmsRbBlod from './adapters/hms-rb-blod';
@@ -20,7 +20,7 @@ import taktak from './adapters/taktak';
 import svanurinn from './adapters/svanurinn';
 import byggjumGraenni from './adapters/byggjum-graenni';
 
-const ADAPTERS: Adapter[] = [
+const ADAPTERS: ScraperAdapter[] = [
   hms,
   hmsRbBlod,
   byggingarreglugerd,
@@ -29,12 +29,12 @@ const ADAPTERS: Adapter[] = [
   byggjumGraenni,
 ];
 
-const bySlug = new Map<string, Adapter>(ADAPTERS.map((a) => [a.slug, a]));
+const bySlug = new Map<string, ScraperAdapter>(ADAPTERS.map((a) => [a.slug, a]));
 
-export function getAdapter(slug: string): Adapter | undefined {
+export function getAdapter(slug: string): ScraperAdapter | undefined {
   return bySlug.get(slug);
 }
 
-export function listAdapters(): Adapter[] {
+export function listAdapters(): ScraperAdapter[] {
   return [...ADAPTERS];
 }

@@ -1,4 +1,4 @@
-import type { Adapter } from '../types';
+import type { ScraperAdapter } from '../types';
 import { crawlForDocuments } from '../html-crawl';
 
 /**
@@ -9,7 +9,7 @@ import { crawlForDocuments } from '../html-crawl';
  * matches the "digit-dash guideline" pattern as a document page (the whole
  * article gets imported and analyzed as text).
  */
-const byggjumGraenni: Adapter = {
+const byggjumGraenni: ScraperAdapter = {
   slug: 'byggjum-graenni',
   name: 'Byggjum grænni framtíð',
 
@@ -30,8 +30,8 @@ const byggjumGraenni: Adapter = {
         const trimmed = text.trim();
         const codeMatch = /^(\d+[.\-]\d+)/.exec(trimmed);
         return {
-          titleHint: trimmed || undefined,
-          externalId: codeMatch?.[1]?.replace('-', '.'),
+          title: trimmed || undefined,
+          sourceRef: codeMatch?.[1]?.replace('-', '.'),
           documentType: 'leidbeining',
           language: 'is',
         };
