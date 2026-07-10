@@ -152,19 +152,39 @@ export default function HomePage() {
       // PostgREST filter-string syntax (commas, parens, wildcards).
       const cleaned = query.trim().replace(/[^\p{L}\p{N}\s]/gu, ' ');
       const terms = cleaned.split(/\s+/).filter(Boolean);
-      for (const term of terms) {
+
+      // Tags live in a many-to-many join (document_tags -> tags), so a term
+      // matching a tag can't be expressed as a plain column ilike in the
+      // same .or() group as title/description. Resolve it in a separate
+      // step per term: find the document ids tagged with a matching tag,
+      // then fold those ids into that term's .or() group via id.in(...).
+      const tagDocIdsByTerm = await Promise.all(
+        terms.map(async (term) => {
+          const { data: tagRows } = await supabase
+            .from('document_tags')
+            .select('document_id, tags!inner(name)')
+            .ilike('tags.name', `%${term}%`)
+            .limit(500);
+          return (tagRows ?? []).map((r: any) => r.document_id as string);
+        }),
+      );
+
+      terms.forEach((term, i) => {
         const pattern = `%${term}%`;
-        q = q.or(
-          [
-            `title.ilike.${pattern}`,
-            `title_en.ilike.${pattern}`,
-            `description.ilike.${pattern}`,
-            `description_en.ilike.${pattern}`,
-            `reference_code.ilike.${pattern}`,
-            `source_ref.ilike.${pattern}`,
-          ].join(','),
-        );
-      }
+        const clauses = [
+          `title.ilike.${pattern}`,
+          `title_en.ilike.${pattern}`,
+          `description.ilike.${pattern}`,
+          `description_en.ilike.${pattern}`,
+          `reference_code.ilike.${pattern}`,
+          `source_ref.ilike.${pattern}`,
+        ];
+        const tagDocIds = tagDocIdsByTerm[i];
+        if (tagDocIds.length > 0) {
+          clauses.push(`id.in.(${tagDocIds.join(',')})`);
+        }
+        q = q.or(clauses.join(','));
+      });
     }
     if (filters.access.size > 0) {
       q = q.in('access_level', Array.from(filters.access));
