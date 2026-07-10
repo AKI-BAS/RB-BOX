@@ -60,6 +60,9 @@ import { categorizeStructuredDoc, type KeywordRule, type TagRule } from './categ
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'documents';
 const MIN_PDF_TEXT_CHARS = 200;
+// Sane upper bound so a pathological PDF can't blow up row size — comfortably
+// above any normal RB-blað's text length.
+const MAX_EXTRACTED_TEXT_CHARS = 200_000;
 
 type Category = { id: string; slug: string; name: string; name_en: string | null };
 
@@ -477,6 +480,7 @@ async function processDiscoveredDoc(
     status,
     file_path: storagePath,
     external_url: url,
+    extracted_text: pdfText ? pdfText.slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
     categorization: categorization as unknown as Json,
     metadata: {
       scraper: {
