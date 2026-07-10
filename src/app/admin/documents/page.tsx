@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import type { Category, Document, Source } from '@/types/database';
+import type { Category, Document, Json, Source } from '@/types/database';
 
 type StatusFilter = 'all' | Document['status'];
 
@@ -24,6 +24,23 @@ const STATUS_BADGE: Record<Document['status'], string> = {
 // queue without building full pagination. Raise if the backlog outgrows this.
 const LOAD_LIMIT = 500;
 
+function docTags(doc: Document): string[] {
+  const meta = doc.metadata as { scraper?: { tags?: unknown } } | null;
+  const tags = meta?.scraper?.tags;
+  return Array.isArray(tags) ? (tags as string[]) : [];
+}
+
+/** Merge an admin_override lock into a doc's existing metadata, preserving
+ * the scraper provenance block — a re-scrape of the same doc respects this
+ * flag instead of recomputing status/categories out from under the admin. */
+function withAdminOverride(doc: Document): Json {
+  const meta = (doc.metadata as Record<string, Json> | null) ?? {};
+  return {
+    ...meta,
+    admin_override: { locked: true, at: new Date().toISOString() },
+  } as Json;
+}
+
 export default function AdminDocumentsPage() {
   const [docs, setDocs] = useState<Document[]>([]);
   const [sources, setSources] = useState<Record<string, Source>>({});
@@ -38,6 +55,11 @@ export default function AdminDocumentsPage() {
   const [assignSelection, setAssignSelection] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -86,6 +108,11 @@ export default function AdminDocumentsPage() {
     [docs, docCategories],
   );
 
+  const categorizedButHiddenIds = useMemo(
+    () => docs.filter((d) => d.status !== 'published' && (docCategories[d.id] ?? []).length > 0).map((d) => d.id),
+    [docs, docCategories],
+  );
+
   function openAssign(doc: Document) {
     setAssignFor(doc.id);
     setAssignSelection(docCategories[doc.id] ?? []);
@@ -96,12 +123,18 @@ export default function AdminDocumentsPage() {
     setSaving(true);
     const supabase = createClient();
     try {
+      const doc = docs.find((d) => d.id === docId);
       await supabase.from('document_categories').delete().eq('document_id', docId);
       await supabase.from('document_categories').insert(
         assignSelection.map((category_id, i) => ({ document_id: docId, category_id, is_primary: i === 0 })),
       );
-      // Manual categorization is an explicit review decision — publish it.
-      await supabase.from('documents').update({ status: 'published' }).eq('id', docId);
+      // Manual categorization is an explicit review decision — publish it,
+      // and lock the override so a future re-scrape doesn't recompute status
+      // or silently overwrite the categories just chosen here.
+      await supabase.from('documents').update({
+        status: 'published',
+        metadata: doc ? withAdminOverride(doc) : { admin_override: { locked: true, at: new Date().toISOString() } },
+      }).eq('id', docId);
       setFlash({ kind: 'ok', text: 'Flokkun vistuð og skjal birt.' });
       setAssignFor(null);
       load();
@@ -112,13 +145,88 @@ export default function AdminDocumentsPage() {
     }
   }
 
+  async function togglePublish(doc: Document) {
+    setBusyId(doc.id);
+    const supabase = createClient();
+    const newStatus: 'published' | 'pending_review' = doc.status === 'published' ? 'pending_review' : 'published';
+    const { error } = await supabase
+      .from('documents')
+      .update({ status: newStatus, metadata: withAdminOverride(doc) })
+      .eq('id', doc.id);
+    if (error) {
+      setFlash({ kind: 'err', text: error.message });
+    } else {
+      setFlash({ kind: 'ok', text: newStatus === 'published' ? 'Skjal birt.' : 'Skjal falið.' });
+      await load();
+    }
+    setBusyId(null);
+  }
+
+  async function bulkPublish(ids: string[]) {
+    if (ids.length === 0) return;
+    setBulkWorking(true);
+    setBulkProgress({ done: 0, total: ids.length });
+    const supabase = createClient();
+    const CONCURRENCY = 8;
+    let idx = 0;
+    let okCount = 0;
+    let errCount = 0;
+
+    async function worker() {
+      while (idx < ids.length) {
+        const i = idx++;
+        const doc = docs.find((d) => d.id === ids[i]);
+        if (!doc) continue;
+        const { error } = await supabase
+          .from('documents')
+          .update({ status: 'published', metadata: withAdminOverride(doc) })
+          .eq('id', doc.id);
+        if (error) errCount++; else okCount++;
+        setBulkProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+
+    setFlash({
+      kind: errCount > 0 ? 'err' : 'ok',
+      text: `Birti ${okCount} skjöl${errCount > 0 ? `, ${errCount} mistókust` : ''}.`,
+    });
+    setBulkWorking(false);
+    setBulkProgress(null);
+    setSelectedIds(new Set());
+    await load();
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((sel) => {
+      const next = new Set(sel);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every((d) => selectedIds.has(d.id));
+
+  function toggleSelectAllFiltered() {
+    setSelectedIds((sel) => {
+      if (allFilteredSelected) {
+        const next = new Set(sel);
+        for (const d of filtered) next.delete(d.id);
+        return next;
+      }
+      const next = new Set(sel);
+      for (const d of filtered) next.add(d.id);
+      return next;
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-[22px] font-semibold tracking-tight">Skjöl</h2>
           <p className="text-[13px] text-paper-soft dark:text-ink-soft mt-1">
-            Öll skjöl, þ.m.t. óflokkuð sem eru falin úr aðalsafni þar til þau eru flokkuð
+            Öll skjöl, þ.m.t. óflokkuð og falin sem eru falin úr aðalsafni þar til þau eru flokkuð eða birt
           </p>
         </div>
         {unsortedCount > 0 && (
@@ -145,7 +253,7 @@ export default function AdminDocumentsPage() {
       )}
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
@@ -167,15 +275,46 @@ export default function AdminDocumentsPage() {
         </span>
       </div>
 
+      {/* Bulk actions */}
+      <div className="flex items-center gap-2 flex-wrap rounded-lg border border-paper-border dark:border-ink-border bg-paper-muted/40 dark:bg-ink-muted/40 px-3 py-2">
+        <span className="text-[12px] text-paper-soft dark:text-ink-soft">
+          {selectedIds.size > 0 ? `${selectedIds.size} valin` : 'Fjöldaaðgerðir:'}
+        </span>
+        <button
+          disabled={selectedIds.size === 0 || bulkWorking}
+          onClick={() => bulkPublish(Array.from(selectedIds))}
+          className="h-7 px-2.5 rounded-md text-[11px] font-medium bg-brick-500 text-white hover:bg-brick-600 disabled:opacity-40 transition"
+        >
+          Birta valin
+        </button>
+        <button
+          disabled={categorizedButHiddenIds.length === 0 || bulkWorking}
+          onClick={() => bulkPublish(categorizedButHiddenIds)}
+          className="h-7 px-2.5 rounded-md text-[11px] font-medium border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 hover:border-brick-500/40 disabled:opacity-40 transition"
+          title="Birtir öll skjöl sem eiga a.m.k. einn flokk en eru ekki útgefin (t.d. föst vegna needs_review)"
+        >
+          Birta öll flokkuð sem eru falin ({categorizedButHiddenIds.length})
+        </button>
+        {bulkWorking && bulkProgress && (
+          <span className="text-[11px] text-paper-faint dark:text-ink-faint">
+            Birti {bulkProgress.done}/{bulkProgress.total}…
+          </span>
+        )}
+      </div>
+
       {/* Table */}
-      <div className="rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface overflow-hidden">
+      <div className="rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface overflow-hidden overflow-x-auto">
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b border-paper-border dark:border-ink-border text-left text-[11px] uppercase tracking-wide text-paper-faint dark:text-ink-faint">
+              <th className="px-3 py-2.5 font-medium">
+                <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAllFiltered} />
+              </th>
               <th className="px-4 py-2.5 font-medium">Titill</th>
               <th className="px-4 py-2.5 font-medium">Heimild</th>
               <th className="px-4 py-2.5 font-medium">Staða</th>
               <th className="px-4 py-2.5 font-medium">Flokkar</th>
+              <th className="px-4 py-2.5 font-medium">Merki</th>
               <th className="px-4 py-2.5 font-medium"></th>
             </tr>
           </thead>
@@ -183,9 +322,14 @@ export default function AdminDocumentsPage() {
             {filtered.map((d) => {
               const catIds = docCategories[d.id] ?? [];
               const isUnsorted = catIds.length === 0;
+              const tags = docTags(d);
+              const rowBusy = busyId === d.id;
               return (
                 <tr key={d.id} className="border-b border-paper-border dark:border-ink-border last:border-0 hover:bg-paper-muted/40 dark:hover:bg-ink-muted/40">
-                  <td className="px-4 py-2.5 max-w-[320px]">
+                  <td className="px-3 py-2.5 align-top">
+                    <input type="checkbox" checked={selectedIds.has(d.id)} onChange={() => toggleSelected(d.id)} />
+                  </td>
+                  <td className="px-4 py-2.5 max-w-[280px] align-top">
                     {d.external_url ? (
                       <a href={d.external_url} target="_blank" rel="noreferrer" className="truncate block hover:text-brick-500 transition" title={d.title}>
                         {d.title}
@@ -193,22 +337,27 @@ export default function AdminDocumentsPage() {
                     ) : (
                       <span className="truncate block" title={d.title}>{d.title}</span>
                     )}
+                    {d.source_ref && (
+                      <span className="block text-[10px] font-mono text-paper-faint dark:text-ink-faint mt-0.5 truncate" title={d.source_ref}>
+                        {d.source_ref}
+                      </span>
+                    )}
                   </td>
-                  <td className="px-4 py-2.5 text-paper-soft dark:text-ink-soft whitespace-nowrap">
+                  <td className="px-4 py-2.5 text-paper-soft dark:text-ink-soft whitespace-nowrap align-top">
                     {sources[d.source_id ?? '']?.name ?? '—'}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-2.5 align-top">
                     <span className={`h-6 px-2 rounded text-[10px] font-medium tracking-wide inline-flex items-center ${STATUS_BADGE[d.status]}`}>
                       {STATUS_LABEL[d.status]}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-2.5 align-top">
                     {isUnsorted ? (
                       <span className="h-6 px-2 rounded text-[10px] font-medium tracking-wide inline-flex items-center bg-amber-500/10 text-amber-700 dark:text-amber-300">
                         Óflokkað
                       </span>
                     ) : (
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap gap-1 max-w-[220px]">
                         {catIds.map((id) => (
                           <span key={id} className="h-5 px-1.5 rounded text-[10px] bg-paper-muted dark:bg-ink-muted text-paper-soft dark:text-ink-soft">
                             {catById[id]?.name ?? id.slice(0, 8)}
@@ -217,12 +366,34 @@ export default function AdminDocumentsPage() {
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5 align-top">
+                    <div className="flex flex-wrap gap-1 max-w-[200px]">
+                      {tags.length > 0
+                        ? tags.map((tag) => (
+                            <span key={tag} className="h-5 px-1.5 rounded text-[10px] bg-paper-muted/70 dark:bg-ink-muted/70 text-paper-faint dark:text-ink-faint">
+                              {tag}
+                            </span>
+                          ))
+                        : <span className="text-paper-faint dark:text-ink-faint">—</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 text-right align-top whitespace-nowrap">
                     <button
                       onClick={() => openAssign(d)}
-                      className="h-7 px-2.5 rounded-md text-[11px] font-medium border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 hover:border-brick-500/40 transition"
+                      className="h-7 px-2.5 rounded-md text-[11px] font-medium border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 hover:border-brick-500/40 transition mr-1.5"
                     >
                       Flokka
+                    </button>
+                    <button
+                      disabled={rowBusy}
+                      onClick={() => togglePublish(d)}
+                      className={`h-7 px-2.5 rounded-md text-[11px] font-medium transition disabled:opacity-50 ${
+                        d.status === 'published'
+                          ? 'border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 hover:border-brick-500/40'
+                          : 'bg-brick-500 text-white hover:bg-brick-600'
+                      }`}
+                    >
+                      {rowBusy ? '…' : d.status === 'published' ? 'Fela' : 'Birta'}
                     </button>
                   </td>
                 </tr>
@@ -230,7 +401,7 @@ export default function AdminDocumentsPage() {
             })}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-paper-faint dark:text-ink-faint">
+                <td colSpan={7} className="px-4 py-8 text-center text-paper-faint dark:text-ink-faint">
                   Engin skjöl fundust með þessum síum.
                 </td>
               </tr>

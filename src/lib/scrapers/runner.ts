@@ -358,11 +358,15 @@ async function processDiscoveredDoc(
 
   // d. source_ref dedup: an existing doc with the same (source, source_ref)
   // means the underlying file moved but represents the same logical document.
-  let existing: { id: string; metadata: unknown } | null = null;
+  let existing: {
+    id: string;
+    metadata: unknown;
+    status: 'draft' | 'pending_review' | 'published' | 'archived';
+  } | null = null;
   if (doc.sourceRef) {
     const { data } = await supabase
       .from('documents')
-      .select('id, metadata')
+      .select('id, metadata, status')
       .eq('source_id', source.id)
       .eq('source_ref', doc.sourceRef)
       .maybeSingle();
@@ -462,9 +466,18 @@ async function processDiscoveredDoc(
     }
   }
 
-  const status: 'published' | 'pending_review' = needsReview || isUncategorized
+  // An admin who manually published/unpublished or recategorized this doc via
+  // the admin UI sets metadata.admin_override.locked — respect that decision
+  // on re-scrape instead of letting the auto gate/categorizer silently
+  // recompute status or overwrite the categories they chose.
+  const existingMeta = (existing?.metadata as { admin_override?: { locked?: boolean } } | null) ?? null;
+  const hasAdminOverride = Boolean(existingMeta?.admin_override?.locked);
+
+  const autoStatus: 'published' | 'pending_review' = needsReview || isUncategorized
     ? 'pending_review'
     : source.auto_publish ? 'published' : 'pending_review';
+  const status: 'draft' | 'pending_review' | 'published' | 'archived' =
+    hasAdminOverride && existing ? existing.status : autoStatus;
 
   const rowFields = {
     title: resolved.title,
@@ -483,6 +496,7 @@ async function processDiscoveredDoc(
     extracted_text: pdfText ? pdfText.slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
     categorization: categorization as unknown as Json,
     metadata: {
+      ...(existingMeta ?? {}),
       scraper: {
         source_url: url,
         content_hash: hash,
@@ -510,7 +524,9 @@ async function processDiscoveredDoc(
         .eq('id', queueRow.id);
       return { kind: 'error', message: `Update failed: ${updErr.message}` };
     }
-    await syncDocumentCategories(supabase, existing.id, resolved.category_ids);
+    if (!hasAdminOverride) {
+      await syncDocumentCategories(supabase, existing.id, resolved.category_ids);
+    }
     await supabase
       .from('scrape_queue')
       .update({ status: 'imported', document_id: existing.id, imported_at: new Date().toISOString() })
