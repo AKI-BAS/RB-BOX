@@ -23,15 +23,17 @@ export default async function AdminLayout({
 
   if (profile?.role !== 'admin') redirect('/');
 
-  const [{ count: srcCount }, { count: catCount }, { count: userCount }] =
+  const [{ count: srcCount }, { count: catCount }, { count: userCount }, { count: docCount }] =
     await Promise.all([
       supabase.from('sources').select('*', { count: 'exact', head: true }),
       supabase.from('categories').select('*', { count: 'exact', head: true }),
       supabase.from('profiles').select('*', { count: 'exact', head: true }),
+      supabase.from('documents').select('*', { count: 'exact', head: true }),
     ]);
 
   const tabs = [
     { href: '/admin/sources',    label: 'Heimildir', count: srcCount ?? 0 },
+    { href: '/admin/documents',  label: 'Skjöl',      count: docCount ?? 0 },
     { href: '/admin/categories', label: 'Flokkar',   count: catCount ?? 0 },
     { href: '/admin/users',      label: 'Notendur',  count: userCount ?? 0 },
     { href: '/admin/tabs',       label: 'Flipar',    count: 0 },

@@ -27,7 +27,13 @@
  *      h. If PDF, upload to Storage; if HTML, store extracted text only
  *      i. Upsert the documents row (insert new, or update in place if a
  *         source_ref match existed) — status='published' if
- *         source.auto_publish else 'pending_review'.
+ *         source.auto_publish else 'pending_review'. A doc with ZERO
+ *         resolved categories is always forced to 'pending_review' even on
+ *         an auto_publish source — an uncategorized doc in the main library
+ *         can't be found by subject and isn't worth showing yet. The admin
+ *         UI (src/app/admin/documents) lists these as "Unsorted" (status
+ *         pending_review + no document_categories rows) so they can be
+ *         found and manually categorized.
  *      j. Sync document_categories from the resolved category ids (multiple
  *         rows per doc are normal now — first in `categorySlugs` is primary).
  *      k. Update scrape_queue.status='imported', link document_id.
@@ -431,6 +437,13 @@ async function processDiscoveredDoc(
     ctx.log('warn', needsReviewReason, { url });
   }
 
+  // A doc with zero resolved categories never gets auto-published, regardless
+  // of source trust — it lands in the same admin-only queue as pending_review,
+  // distinguished there by having no document_categories rows ("unsorted").
+  // Surfacing it to the main library uncategorized would make it unfindable
+  // by subject and unfilterable — worse than just not showing it yet.
+  const isUncategorized = resolved.category_ids.length === 0;
+
   // h. Upload PDF to Storage if applicable
   let storagePath: string | null = null;
   if (isPdf) {
@@ -446,7 +459,7 @@ async function processDiscoveredDoc(
     }
   }
 
-  const status: 'published' | 'pending_review' = needsReview
+  const status: 'published' | 'pending_review' = needsReview || isUncategorized
     ? 'pending_review'
     : source.auto_publish ? 'published' : 'pending_review';
 
