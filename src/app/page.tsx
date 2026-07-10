@@ -140,10 +140,31 @@ export default function HomePage() {
       .limit(50);
 
     if (query.trim()) {
+      // Plain ilike substring search rather than FTS: websearch_to_tsquery
+      // only matches whole lexemes (no prefix/substring), so "vot" never
+      // matched "votrými" and multi-word queries needed the config used to
+      // build search_vector to line up exactly with the query's config.
+      // Each term is required (ANDed via repeated .or() calls — PostgREST
+      // ANDs distinct filter params, including repeated `or` groups) and
+      // matches if it's a substring of ANY of the columns below (ORed
+      // within one .or() call). \p{L} keeps Icelandic letters (á, í, ý,
+      // ð, þ, ö) intact and only strips characters that could break the
+      // PostgREST filter-string syntax (commas, parens, wildcards).
       const cleaned = query.trim().replace(/[^\p{L}\p{N}\s]/gu, ' ');
-      const terms = cleaned.split(/\s+/).filter(Boolean).join(' & ');
-      if (terms)
-        q = q.textSearch('search_vector', terms, { type: 'websearch' });
+      const terms = cleaned.split(/\s+/).filter(Boolean);
+      for (const term of terms) {
+        const pattern = `%${term}%`;
+        q = q.or(
+          [
+            `title.ilike.${pattern}`,
+            `title_en.ilike.${pattern}`,
+            `description.ilike.${pattern}`,
+            `description_en.ilike.${pattern}`,
+            `reference_code.ilike.${pattern}`,
+            `source_ref.ilike.${pattern}`,
+          ].join(','),
+        );
+      }
     }
     if (filters.access.size > 0) {
       q = q.in('access_level', Array.from(filters.access));
