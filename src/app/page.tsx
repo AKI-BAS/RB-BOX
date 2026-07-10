@@ -127,9 +127,15 @@ export default function HomePage() {
 
   const runSearch = useCallback(async () => {
     const supabase = createClient();
+    // Category lives in the many-to-many document_categories table, not a
+    // column on documents — filtering by it requires an inner-joined embed
+    // so PostgREST restricts the parent rows, not just a plain select.
+    const selectCols = filters.category
+      ? '*, document_categories!inner(category_id)'
+      : '*';
     let q = supabase
       .from('documents')
-      .select('*')
+      .select(selectCols)
       .eq('status', 'published')
       .limit(50);
 
@@ -145,10 +151,13 @@ export default function HomePage() {
     if (filters.sources.size > 0) {
       q = q.in('source_id', Array.from(filters.sources));
     }
+    if (filters.category) {
+      q = q.eq('document_categories.category_id', filters.category);
+    }
     q = q.order('published_date', { ascending: false, nullsFirst: false });
 
     const { data } = await q;
-    if (data) setResults(data as Document[]);
+    if (data) setResults(data as unknown as Document[]);
   }, [query, filters]);
 
   useEffect(() => {
