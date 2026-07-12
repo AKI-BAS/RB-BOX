@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { t, type Lang } from '@/lib/i18n';
 import { BrowsePanel, type Filters } from '@/components/BrowsePanel';
 import { Spotlight } from '@/components/Spotlight';
+import { deriveSearchTerms } from '@/lib/search/highlight';
 import type { Document, Source, Category } from '@/types/database';
 
 // Format "Uppfært fyrir 2 klst." from a Date. Approximate; only shown when
@@ -150,8 +151,7 @@ export default function HomePage() {
       // within one .or() call). \p{L} keeps Icelandic letters (á, í, ý,
       // ð, þ, ö) intact and only strips characters that could break the
       // PostgREST filter-string syntax (commas, parens, wildcards).
-      const cleaned = query.trim().replace(/[^\p{L}\p{N}\s]/gu, ' ');
-      const terms = cleaned.split(/\s+/).filter(Boolean);
+      const terms = deriveSearchTerms(query);
 
       // Tags live in a many-to-many join (document_tags -> tags), so a term
       // matching a tag can't be expressed as a plain column ilike in the

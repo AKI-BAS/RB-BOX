@@ -2,6 +2,8 @@
 
 import { type RefObject, useMemo } from 'react';
 import { t, type Lang } from '@/lib/i18n';
+import { Highlighted } from '@/components/search/Highlighted';
+import { deriveSearchTerms, buildSnippet } from '@/lib/search/highlight';
 import type { Document, Source, Category } from '@/types/database';
 
 interface SpotlightProps {
@@ -101,6 +103,9 @@ export function Spotlight({
   }, [activeCategory, categories, lang]);
 
   const matchTerms = tokenize(query);
+  // Same derivation runSearch() uses to build the ilike query — highlighting
+  // must match exactly what the DB matched on, not an independent tokenizer.
+  const highlightTerms = useMemo(() => deriveSearchTerms(query), [query]);
 
   return (
     <div className="rounded-xl bg-paper-surface dark:bg-ink-surface border border-paper-border dark:border-ink-border shadow-sm shadow-black/[0.04] overflow-hidden">
@@ -192,11 +197,14 @@ export function Spotlight({
                 sourceLabel,
                 doc.published_date?.slice(0, 7),
               ].filter(Boolean) as string[];
+              const title = lang === 'en' && doc.title_en ? doc.title_en : doc.title;
+              const snippet = buildSnippet(doc.extracted_text, highlightTerms);
 
               return (
                 <li key={doc.id}>
                   <button
                     onClick={() => onOpen(doc.id)}
+                    aria-label={title}
                     className={`w-full flex items-start gap-3 pl-4 pr-3 py-3 text-left border-t border-paper-border dark:border-ink-border first:border-t-0 transition ${
                       isTop
                         ? 'bg-brick-500/[0.06] border-l-2 border-l-brick-500 pl-[14px]'
@@ -210,13 +218,16 @@ export function Spotlight({
                           isTop ? 'font-medium' : ''
                         }`}
                       >
-                        {lang === 'en' && doc.title_en
-                          ? doc.title_en
-                          : doc.title}
+                        <Highlighted text={title} terms={highlightTerms} />
                       </div>
                       <div className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint mt-0.5 truncate tracking-tight">
                         {metaParts.join(' · ')}
                       </div>
+                      {snippet && (
+                        <p className="text-[11.5px] text-paper-soft dark:text-ink-soft opacity-70 line-clamp-2 mt-1">
+                          <Highlighted text={snippet} terms={highlightTerms} />
+                        </p>
+                      )}
                     </div>
                     {isTop && (
                       <kbd className="mt-1 ml-1 shrink-0">↵</kbd>
