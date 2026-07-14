@@ -335,12 +335,35 @@ function isHmsHostedUrl(url: string): boolean {
   }
 }
 
+/** A couple of gentle retries (short backoff) — not hammering a host that's rate-limiting us. */
+async function fetchWithGentleRetry(
+  ctx: ScraperContext,
+  url: string,
+  attempts = 2,
+  backoffMs = 3000,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await ctx.fetch(url);
+      if (res.ok) return res;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 /**
  * Turn an adapter's `pdfLinks` into document_files rows: self-host
  * (download + upload to Storage) anything on hms.is/Prismic's CDN, keep
  * everything else (e.g. an althingi.is regulation reference) as an external
- * link. A fetch/upload failure degrades to an external link rather than
- * dropping the reference entirely.
+ * link. A fetch/upload failure (even after a couple of gentle retries)
+ * degrades to an external link rather than dropping the reference entirely
+ * — so a host that's temporarily rate-limiting us doesn't sink the doc,
+ * just its self-hosting; a later re-scrape can pick it up once it clears.
  */
 async function resolvePdfLinks(
   ctx: ScraperContext,
@@ -356,12 +379,7 @@ async function resolvePdfLinks(
       continue;
     }
     try {
-      const res = await ctx.fetch(link.url);
-      if (!res.ok) {
-        ctx.log('warn', `Attachment fetch failed (HTTP ${res.status}): ${link.url}`);
-        resolved.push({ kind: 'external', file_path: null, url: link.url, label: link.label ?? null });
-        continue;
-      }
+      const res = await fetchWithGentleRetry(ctx, link.url);
       const bytes = Buffer.from(await res.arrayBuffer());
       const hash = contentHash(bytes);
       const year = new Date().getFullYear();
@@ -421,25 +439,36 @@ async function processDiscoveredDoc(
     return { kind: 'skipped', reason: 'Already imported in a prior run' };
   }
 
-  // b. Fetch
-  let res: Response;
-  try {
-    res = await ctx.fetch(url);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await supabase.from('scrape_queue').update({ status: 'error', error: msg }).eq('id', queueRow.id);
-    return { kind: 'error', message: `Fetch failed: ${msg}` };
+  // b. Fetch — skipped when the adapter already supplied the doc's content
+  // directly (doc.bodyText, e.g. a Prismic API response): the live page
+  // fetch would only ever be used for hashing here, hms.is is client-
+  // rendered anyway (a bare fetch wouldn't see real content), and hms.is has
+  // proven unreliable to hit repeatedly (429s) for a fetch whose result
+  // isn't even used for content. Hash the supplied text instead.
+  let bytes: Buffer;
+  let contentType = '';
+  const skipLiveFetch = Boolean(doc.bodyText);
+  if (skipLiveFetch) {
+    bytes = Buffer.from(doc.bodyText!, 'utf-8');
+  } else {
+    let res: Response;
+    try {
+      res = await ctx.fetch(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await supabase.from('scrape_queue').update({ status: 'error', error: msg }).eq('id', queueRow.id);
+      return { kind: 'error', message: `Fetch failed: ${msg}` };
+    }
+    if (!res.ok) {
+      const msg = `HTTP ${res.status}`;
+      await supabase.from('scrape_queue').update({ status: 'error', error: msg }).eq('id', queueRow.id);
+      return { kind: 'error', message: msg };
+    }
+    bytes = Buffer.from(await res.arrayBuffer());
+    contentType = res.headers.get('content-type') || '';
   }
-  if (!res.ok) {
-    const msg = `HTTP ${res.status}`;
-    await supabase.from('scrape_queue').update({ status: 'error', error: msg }).eq('id', queueRow.id);
-    return { kind: 'error', message: msg };
-  }
-
-  const bytes = Buffer.from(await res.arrayBuffer());
   const hash = contentHash(bytes);
-  const contentType = res.headers.get('content-type') || '';
-  const isPdf = contentType.includes('pdf') || looksLikeDocument(url);
+  const isPdf = !skipLiveFetch && (contentType.includes('pdf') || looksLikeDocument(url));
 
   // c. Content-hash dedup: if any document already has this exact hash, skip
   const { data: dup } = await supabase
