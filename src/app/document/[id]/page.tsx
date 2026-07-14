@@ -11,15 +11,31 @@ export default async function DocumentPage({
   const supabase = createClient();
   const { data: doc } = await supabase
     .from('documents')
-    .select('*, source:sources(*), document_files(*)')
+    .select('*, source:sources(*)')
     .eq('id', params.id)
-    .order('sort_order', { foreignTable: 'document_files' })
     .single();
 
   if (!doc) notFound();
 
   const source = (doc as any).source as { name: string; base_url: string | null } | null;
-  const files = ((doc as any).document_files ?? []) as DocumentFile[];
+
+  // document_files is a separate query, deliberately not embedded in the
+  // documents select above: an embed/foreignTable-order on a table that
+  // doesn't exist yet fails the WHOLE query (this doc 404s), not just the
+  // embedded part. Queried standalone, a missing-table error here just
+  // means an empty downloads list — the rest of the page still renders.
+  // TODO: once the document_files migration is confirmed applied, this can
+  // be folded back into a single embedded query if desired.
+  let files: DocumentFile[] = [];
+  const { data: filesData, error: filesErr } = await supabase
+    .from('document_files')
+    .select('*')
+    .eq('document_id', doc.id)
+    .order('sort_order');
+  if (!filesErr && filesData) files = filesData;
+
+  // doc.source_url is simply absent (undefined) from a `select('*')` result
+  // if the column doesn't exist yet — safe without any extra guard.
   const guidanceUrl = doc.source_url ?? doc.external_url;
   const attributionUrl = doc.source_url ?? source?.base_url ?? null;
 

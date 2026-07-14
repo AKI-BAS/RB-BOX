@@ -74,6 +74,33 @@ const MIN_PDF_TEXT_CHARS = 200;
 // above any normal RB-blað's text length.
 const MAX_EXTRACTED_TEXT_CHARS = 200_000;
 
+/**
+ * documents.source_url and document_files are additive schema (see
+ * 20260709080000_document_files.sql) that may not be applied to a given
+ * environment yet. Rather than hard-require it, probe once per process and
+ * degrade gracefully: omit source_url from writes and skip document_files
+ * sync entirely until the migration lands — no redeploy needed once it
+ * does, the next scrape run's probe just picks it up. Without this, EVERY
+ * source's insert/update would fail (not just this feature's), since
+ * rowFields would reference a column that doesn't exist.
+ */
+let schemaCapsCache: { hasSourceUrl: boolean; hasDocumentFiles: boolean } | null = null;
+
+async function detectSchemaCapabilities(
+  supabase: ReturnType<typeof createAdminClient>,
+): Promise<{ hasSourceUrl: boolean; hasDocumentFiles: boolean }> {
+  if (schemaCapsCache) return schemaCapsCache;
+  const [sourceUrlProbe, filesProbe] = await Promise.all([
+    supabase.from('documents').select('source_url').limit(1),
+    supabase.from('document_files').select('id').limit(1),
+  ]);
+  schemaCapsCache = {
+    hasSourceUrl: !sourceUrlProbe.error,
+    hasDocumentFiles: !filesProbe.error,
+  };
+  return schemaCapsCache;
+}
+
 type Category = { id: string; slug: string; name: string; name_en: string | null };
 
 interface RulesBundle {
@@ -578,6 +605,8 @@ async function processDiscoveredDoc(
   const status: 'draft' | 'pending_review' | 'published' | 'archived' =
     hasAdminOverride && existing ? existing.status : autoStatus;
 
+  const caps = await detectSchemaCapabilities(supabase);
+
   const rowFields = {
     title: resolved.title,
     title_en: resolved.title_en ?? null,
@@ -592,7 +621,7 @@ async function processDiscoveredDoc(
     status,
     file_path: storagePath,
     external_url: url,
-    source_url: doc.guidanceUrl ?? null,
+    ...(caps.hasSourceUrl ? { source_url: doc.guidanceUrl ?? null } : {}),
     extracted_text: pdfText ? pdfText.slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
     categorization: categorization as unknown as Json,
     metadata: {
@@ -626,7 +655,7 @@ async function processDiscoveredDoc(
     }
     if (!hasAdminOverride) {
       await syncDocumentCategories(supabase, existing.id, resolved.category_ids);
-      if (doc.pdfLinks && doc.pdfLinks.length > 0) {
+      if (caps.hasDocumentFiles && doc.pdfLinks && doc.pdfLinks.length > 0) {
         const files = await resolvePdfLinks(ctx, source, doc.pdfLinks);
         await syncDocumentFiles(supabase, existing.id, files);
       }
@@ -653,7 +682,7 @@ async function processDiscoveredDoc(
   }
 
   await syncDocumentCategories(supabase, newDoc.id, resolved.category_ids);
-  if (doc.pdfLinks && doc.pdfLinks.length > 0) {
+  if (caps.hasDocumentFiles && doc.pdfLinks && doc.pdfLinks.length > 0) {
     const files = await resolvePdfLinks(ctx, source, doc.pdfLinks);
     await syncDocumentFiles(supabase, newDoc.id, files);
   }
