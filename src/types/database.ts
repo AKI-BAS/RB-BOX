@@ -152,6 +152,7 @@ export interface Database {
           status: 'draft' | 'pending_review' | 'published' | 'archived';
           file_path: string | null;
           external_url: string | null;
+          source_url: string | null;
           page_count: number | null;
           extracted_text: string | null;
           metadata: Json;
@@ -178,6 +179,25 @@ export interface Database {
           category_id: string;
         };
         Update: Partial<Database['public']['Tables']['document_categories']['Row']>;
+        Relationships: [];
+      };
+      document_files: {
+        Row: {
+          id: string;
+          document_id: string;
+          kind: 'self_hosted' | 'external';
+          file_path: string | null;
+          url: string;
+          label: string | null;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['document_files']['Row']> & {
+          document_id: string;
+          kind: 'self_hosted' | 'external';
+          url: string;
+        };
+        Update: Partial<Database['public']['Tables']['document_files']['Row']>;
         Relationships: [];
       };
       category_tag_rules: {
@@ -234,6 +254,7 @@ export interface Database {
 }
 
 export type Document = Database['public']['Tables']['documents']['Row'];
+export type DocumentFile = Database['public']['Tables']['document_files']['Row'];
 export type Source = Database['public']['Tables']['sources']['Row'];
 export type Category = Database['public']['Tables']['categories']['Row'];
 export type Profile = Database['public']['Tables']['profiles']['Row'];

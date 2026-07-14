@@ -15,6 +15,7 @@ import type { ScraperAdapter } from './types';
 
 import hms from './adapters/hms';
 import hmsRbBlod from './adapters/hms-rb-blod';
+import hmsRbBlodWeb from './adapters/hms-rb-blod-web';
 import byggingarreglugerd from './adapters/byggingarreglugerd';
 import taktak from './adapters/taktak';
 import svanurinn from './adapters/svanurinn';
@@ -23,6 +24,7 @@ import byggjumGraenni from './adapters/byggjum-graenni';
 const ADAPTERS: ScraperAdapter[] = [
   hms,
   hmsRbBlod,
+  hmsRbBlodWeb,
   byggingarreglugerd,
   taktak,
   svanurinn,

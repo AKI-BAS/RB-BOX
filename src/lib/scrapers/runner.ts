@@ -47,6 +47,16 @@
  * regardless of whether a category ended up resolved. The contributor
  * upload flow (`/api/admin/categorize`) is unaffected — it's a separate code
  * path that never went through this runner.
+ *
+ * Multi-attachment docs (documents.source_url + document_files): an adapter
+ * can supply `guidanceUrl` (a canonical HTML source page, stored as
+ * documents.source_url — distinct from `url`/external_url, the thing
+ * actually fetched), `bodyText` (pre-extracted rich text used in place of
+ * pdf-parse for text-only content), and `pdfLinks` (PDFs referenced by that
+ * content). Each pdfLink is self-hosted (downloaded + uploaded to Storage)
+ * if it's on hms.is/Prismic's CDN, else kept as an external link — synced
+ * into document_files the same way categories are synced, and skipped
+ * entirely when metadata.admin_override.locked is set.
  */
 
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
@@ -266,6 +276,86 @@ async function syncDocumentCategories(
   );
 }
 
+type ResolvedFile = { kind: 'self_hosted' | 'external'; file_path: string | null; url: string; label: string | null };
+
+/** Replace a document's "Downloads" list with the given set (order preserved). */
+async function syncDocumentFiles(
+  supabase: ReturnType<typeof createAdminClient>,
+  documentId: string,
+  files: ResolvedFile[],
+): Promise<void> {
+  await supabase.from('document_files').delete().eq('document_id', documentId);
+  if (files.length === 0) return;
+  await supabase.from('document_files').insert(
+    files.map((f, i) => ({
+      document_id: documentId,
+      kind: f.kind,
+      file_path: f.file_path,
+      url: f.url,
+      label: f.label,
+      sort_order: i,
+    })),
+  );
+}
+
+/** hms.is itself, or Prismic's CDN — anything else is left as an external link. */
+function isHmsHostedUrl(url: string): boolean {
+  try {
+    const host = new URL(url).host.toLowerCase();
+    return host.endsWith('hms.is') || host.endsWith('prismic.io');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Turn an adapter's `pdfLinks` into document_files rows: self-host
+ * (download + upload to Storage) anything on hms.is/Prismic's CDN, keep
+ * everything else (e.g. an althingi.is regulation reference) as an external
+ * link. A fetch/upload failure degrades to an external link rather than
+ * dropping the reference entirely.
+ */
+async function resolvePdfLinks(
+  ctx: ScraperContext,
+  source: Source,
+  links: Array<{ url: string; label?: string }>,
+): Promise<ResolvedFile[]> {
+  const supabase = createAdminClient();
+  const resolved: ResolvedFile[] = [];
+
+  for (const link of links) {
+    if (!isHmsHostedUrl(link.url)) {
+      resolved.push({ kind: 'external', file_path: null, url: link.url, label: link.label ?? null });
+      continue;
+    }
+    try {
+      const res = await ctx.fetch(link.url);
+      if (!res.ok) {
+        ctx.log('warn', `Attachment fetch failed (HTTP ${res.status}): ${link.url}`);
+        resolved.push({ kind: 'external', file_path: null, url: link.url, label: link.label ?? null });
+        continue;
+      }
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const hash = contentHash(bytes);
+      const year = new Date().getFullYear();
+      const storagePath = `${source.slug}/${year}/files/${hash}.pdf`;
+      const { error: upErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .upload(storagePath, bytes, { contentType: 'application/pdf', upsert: false });
+      if (upErr && !/already exists/i.test(upErr.message)) {
+        ctx.log('warn', `Attachment upload failed: ${upErr.message}`, { url: link.url });
+        resolved.push({ kind: 'external', file_path: null, url: link.url, label: link.label ?? null });
+        continue;
+      }
+      resolved.push({ kind: 'self_hosted', file_path: storagePath, url: link.url, label: link.label ?? null });
+    } catch (err) {
+      ctx.log('warn', `Attachment fetch/upload error: ${err instanceof Error ? err.message : String(err)}`, { url: link.url });
+      resolved.push({ kind: 'external', file_path: null, url: link.url, label: link.label ?? null });
+    }
+  }
+  return resolved;
+}
+
 async function processDiscoveredDoc(
   doc: DiscoveredDoc,
   source: Source,
@@ -381,10 +471,17 @@ async function processDiscoveredDoc(
     return { kind: 'skipped', reason: 'Unchanged (source_ref + content_hash match)' };
   }
 
-  // e. Parse PDF text once — feeds both the sanity check and the keyword categorizer.
+  // e. Extract text once — feeds both the thin-content sanity check and the
+  // keyword categorizer. PDF docs get it via pdf-parse; adapters whose
+  // content is rich-text/HTML (e.g. a Prismic slice body) supply it directly
+  // via doc.bodyText, skipping pdf-parse entirely — same downstream handling
+  // either way.
   let pdfText = '';
   let pdfTextLength = 0;
-  if (isPdf) {
+  if (doc.bodyText) {
+    pdfText = doc.bodyText.trim();
+    pdfTextLength = pdfText.length;
+  } else if (isPdf) {
     const parsed = await parsePdfText(bytes);
     pdfText = parsed.text;
     pdfTextLength = parsed.length;
@@ -435,12 +532,14 @@ async function processDiscoveredDoc(
     };
   }
 
-  // g. PDF sanity check — thin/unreadable text forces review regardless of trust.
+  // g. Thin-content sanity check — applies to any doc that claims to have
+  // extractable text (a PDF, or an adapter that supplied bodyText); thin/
+  // unreadable text forces review regardless of source trust.
   let needsReview = false;
   let needsReviewReason: string | undefined;
-  if (isPdf && pdfTextLength < MIN_PDF_TEXT_CHARS) {
+  if ((isPdf || doc.bodyText) && pdfTextLength < MIN_PDF_TEXT_CHARS) {
     needsReview = true;
-    needsReviewReason = `PDF text extraction yielded only ${pdfTextLength} chars (< ${MIN_PDF_TEXT_CHARS})`;
+    needsReviewReason = `Text extraction yielded only ${pdfTextLength} chars (< ${MIN_PDF_TEXT_CHARS})`;
     ctx.log('warn', needsReviewReason, { url });
   }
 
@@ -493,6 +592,7 @@ async function processDiscoveredDoc(
     status,
     file_path: storagePath,
     external_url: url,
+    source_url: doc.guidanceUrl ?? null,
     extracted_text: pdfText ? pdfText.slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
     categorization: categorization as unknown as Json,
     metadata: {
@@ -526,6 +626,10 @@ async function processDiscoveredDoc(
     }
     if (!hasAdminOverride) {
       await syncDocumentCategories(supabase, existing.id, resolved.category_ids);
+      if (doc.pdfLinks && doc.pdfLinks.length > 0) {
+        const files = await resolvePdfLinks(ctx, source, doc.pdfLinks);
+        await syncDocumentFiles(supabase, existing.id, files);
+      }
     }
     await supabase
       .from('scrape_queue')
@@ -549,6 +653,10 @@ async function processDiscoveredDoc(
   }
 
   await syncDocumentCategories(supabase, newDoc.id, resolved.category_ids);
+  if (doc.pdfLinks && doc.pdfLinks.length > 0) {
+    const files = await resolvePdfLinks(ctx, source, doc.pdfLinks);
+    await syncDocumentFiles(supabase, newDoc.id, files);
+  }
 
   await supabase
     .from('scrape_queue')

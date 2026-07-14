@@ -1,6 +1,7 @@
 import { createClient } from '@prismicio/client';
 import type { Client, PrismicDocument } from '@prismicio/client';
 import type { DiscoveredDoc, ScraperAdapter, ScraperContext } from '../types';
+import { extractText } from './prismic-shared';
 
 /**
  * HMS Rb-leiðbeiningablöð (via Prismic Content API).
@@ -104,19 +105,6 @@ function walkForPdfUrl(node: unknown): { url: string; name?: string } | null {
     }
   }
   return null;
-}
-
-/** Prismic "Rich Text" fields are arrays of blocks. Flatten to plain text. */
-function extractText(node: unknown): string | undefined {
-  if (typeof node === 'string') return node;
-  if (!Array.isArray(node)) return undefined;
-  return node
-    .map((block) => (block && typeof block === 'object' && typeof (block as { text?: unknown }).text === 'string'
-      ? (block as { text: string }).text
-      : ''))
-    .filter(Boolean)
-    .join(' ')
-    .trim() || undefined;
 }
 
 /** Verified: data.title (rich text, heading1). Other keys kept as a fallback only. */

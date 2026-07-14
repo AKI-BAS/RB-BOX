@@ -59,6 +59,25 @@ export interface DiscoveredDoc {
   description?: string;
   /** Suggested document type. */
   documentType?: 'rb_blad' | 'leidbeining' | 'rannsokn' | 'handbok' | 'annad';
+  /**
+   * Canonical guidance/source page for this doc (e.g. the hms.is content
+   * page), when it's distinct from `url` (the thing actually fetched for
+   * hashing/content). Stored as documents.source_url.
+   */
+  guidanceUrl?: string;
+  /**
+   * Additional downloadable files referenced by this doc (e.g. PDFs linked
+   * from a guidance page's body) — becomes the document_files "Downloads"
+   * list. The runner decides self-hosted vs external per link based on host.
+   */
+  pdfLinks?: Array<{ url: string; label?: string }>;
+  /**
+   * Pre-extracted body text for adapters whose content is rich-text/HTML
+   * rather than a PDF (e.g. a Prismic slice body) — the runner uses this in
+   * place of PDF-parsed text for categorization, the thin-content gate, and
+   * documents.extracted_text when present, skipping pdf-parse entirely.
+   */
+  bodyText?: string;
 }
 
 /** @deprecated use DiscoveredDoc — kept as an alias so older adapter code keeps compiling. */
