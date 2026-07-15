@@ -371,7 +371,7 @@ export default function HomePage() {
         )}
 
         <main className="flex-1 flex justify-center">
-          <div className="w-full max-w-[720px]">
+          <div className="w-full max-w-[720px] lg:w-[80%] lg:max-w-[80%]">
             <Spotlight
               lang={lang}
               inputRef={searchRef}
