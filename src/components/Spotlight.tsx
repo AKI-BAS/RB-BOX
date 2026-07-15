@@ -109,9 +109,9 @@ export function Spotlight({
   const highlightTerms = useMemo(() => deriveSearchTerms(query), [query]);
 
   return (
-    <div className="rounded-xl bg-paper-surface dark:bg-ink-surface border border-paper-border dark:border-ink-border shadow-sm shadow-black/[0.04] overflow-hidden">
+    <div className="rounded-xl bg-paper-surface dark:bg-ink-surface border border-paper-border dark:border-ink-border shadow-sm shadow-black/[0.04] overflow-hidden flex flex-col sm:h-[calc(100vh-6rem)]">
       {/* Search row */}
-      <div className="flex items-center gap-3 px-4 h-[52px] border-b border-paper-border dark:border-ink-border">
+      <div className="shrink-0 flex items-center gap-3 px-4 h-[52px] border-b border-paper-border dark:border-ink-border">
         <svg
           width="16"
           height="16"
@@ -139,7 +139,7 @@ export function Spotlight({
 
       {/* Matched-on chips — only when there's a query AND we have results */}
       {ready && query.trim() && results.length > 0 && matchTerms.length > 0 && (
-        <div className="px-4 py-2 text-[11.5px] text-paper-soft dark:text-ink-soft border-b border-paper-border dark:border-ink-border flex items-center gap-1.5 flex-wrap">
+        <div className="shrink-0 px-4 py-2 text-[11.5px] text-paper-soft dark:text-ink-soft border-b border-paper-border dark:border-ink-border flex items-center gap-1.5 flex-wrap">
           <span className="text-paper-faint dark:text-ink-faint">
             {t(lang, 'matchedOn')}:
           </span>
@@ -156,18 +156,18 @@ export function Spotlight({
 
       {/* Results / empty state */}
       {!ready ? (
-        <div className="p-8 text-center text-xs text-paper-faint dark:text-ink-faint">
+        <div className="p-8 text-center text-xs text-paper-faint dark:text-ink-faint sm:flex-1 sm:flex sm:items-center sm:justify-center">
           …
         </div>
       ) : results.length === 0 ? (
-        <div className="p-8 text-center text-xs text-paper-faint dark:text-ink-faint">
+        <div className="p-8 text-center text-xs text-paper-faint dark:text-ink-faint sm:flex-1 sm:flex sm:items-center sm:justify-center">
           {query.trim()
             ? t(lang, 'noResults')
             : `${t(lang, 'startTyping')} [.`}
         </div>
       ) : (
         <>
-          <div className="px-4 py-2 text-[10px] uppercase tracking-[0.08em] text-paper-faint dark:text-ink-faint bg-paper-muted dark:bg-ink-muted flex items-center gap-1.5">
+          <div className="shrink-0 px-4 py-2 text-[10px] uppercase tracking-[0.08em] text-paper-faint dark:text-ink-faint bg-paper-muted dark:bg-ink-muted flex items-center gap-1.5">
             <span>{results.length}</span>
             <span>
               {results.length === 1 ? t(lang, 'result') : t(lang, 'results')}
@@ -184,7 +184,7 @@ export function Spotlight({
               </>
             )}
           </div>
-          <ul className="max-h-[60vh] overflow-y-auto">
+          <ul className="max-h-[60vh] sm:max-h-none sm:flex-1 sm:min-h-0 overflow-y-auto">
             {results.map((doc, i) => {
               const isTop = i === 0;
               const source = doc.source_id

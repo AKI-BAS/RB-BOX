@@ -75,9 +75,9 @@ export function BrowsePanel({
     categories.filter((c) => c.parent_id === id);
 
   return (
-    <aside className="w-full sm:w-[248px] shrink-0 rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface flex flex-col overflow-hidden">
+    <aside className="w-full sm:w-[248px] sm:h-[calc(100vh-6rem)] shrink-0 rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface flex flex-col overflow-hidden">
       {/* Panel header */}
-      <div className="px-4 h-[42px] flex items-center justify-between border-b border-paper-border dark:border-ink-border">
+      <div className="shrink-0 px-4 h-[42px] flex items-center justify-between border-b border-paper-border dark:border-ink-border">
         <div className="flex items-center gap-2">
           <span className="text-[12px] font-medium">
             {t(lang, 'browse')}
@@ -97,7 +97,7 @@ export function BrowsePanel({
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-5">
         {/* Access */}
         <section>
           <h3 className="section-label mb-2.5">{t(lang, 'access')}</h3>
@@ -241,7 +241,7 @@ export function BrowsePanel({
       </div>
 
       {/* Footer — always visible; explicit "3 filters active · Clear" */}
-      <div className="px-4 py-2.5 border-t border-paper-border dark:border-ink-border flex items-center justify-between text-[11.5px]">
+      <div className="shrink-0 px-4 py-2.5 border-t border-paper-border dark:border-ink-border flex items-center justify-between text-[11.5px]">
         <span className="text-paper-faint dark:text-ink-faint">
           {activeCount > 0
             ? `${activeCount} ${t(lang, 'filtersActive')}`

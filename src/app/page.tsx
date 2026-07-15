@@ -434,7 +434,7 @@ export default function HomePage() {
 
       {/* Body — browse panel + main column both live inside a padded canvas so
           the browse card floats rather than sticking to the edge. */}
-      <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-16 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch sm:items-start">
+      <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-16 sm:pb-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch sm:items-start">
         {browseOpen && (
           <BrowsePanel
             lang={lang}
