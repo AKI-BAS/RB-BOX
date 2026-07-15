@@ -3,6 +3,7 @@
 import { type RefObject, useMemo } from 'react';
 import { t, type Lang } from '@/lib/i18n';
 import { Highlighted } from '@/components/search/Highlighted';
+import { AgeBadge } from '@/components/AgeBadge';
 import { deriveSearchTerms, buildSnippet } from '@/lib/search/highlight';
 import type { Document, Source, Category } from '@/types/database';
 
@@ -195,7 +196,6 @@ export function Spotlight({
               const metaParts = [
                 doc.reference_code,
                 sourceLabel,
-                doc.published_date?.slice(0, 7),
               ].filter(Boolean) as string[];
               const title = lang === 'en' && doc.title_en ? doc.title_en : doc.title;
               const snippet = buildSnippet(doc.extracted_text, highlightTerms);
@@ -220,8 +220,11 @@ export function Spotlight({
                       >
                         <Highlighted text={title} terms={highlightTerms} />
                       </div>
-                      <div className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint mt-0.5 truncate tracking-tight">
-                        {metaParts.join(' · ')}
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint truncate tracking-tight min-w-0 flex-1">
+                          {metaParts.join(' · ')}
+                        </div>
+                        <AgeBadge date={doc.published_date} locale={lang} />
                       </div>
                       {snippet && (
                         <p className="text-[11.5px] text-paper-soft dark:text-ink-soft opacity-70 line-clamp-2 mt-1">
