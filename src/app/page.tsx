@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { t, type Lang } from '@/lib/i18n';
@@ -8,6 +8,38 @@ import { BrowsePanel, type Filters } from '@/components/BrowsePanel';
 import { Spotlight } from '@/components/Spotlight';
 import { deriveSearchTerms } from '@/lib/search/highlight';
 import type { Document, Source, Category } from '@/types/database';
+
+// Comfortably above the current library size (~170 published docs) so an
+// unfiltered or source-filtered browse shows everything, not just a recent
+// slice, without needing real pagination yet.
+const RESULTS_LIMIT = 500;
+
+const THEME_KEY = 'rb-theme';
+const FILTERS_KEY = 'rb-filters';
+
+function readStoredTheme(): 'light' | 'dark' | 'system' | null {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return v === 'light' || v === 'dark' || v === 'system' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredFilters(): Filters | null {
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      access: new Set(parsed.access ?? []),
+      sources: new Set(parsed.sources ?? []),
+      category: parsed.category ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 // Format "Uppfært fyrir 2 klst." from a Date. Approximate; only shown when
 // meaningful (i.e. we have a real latest-update timestamp).
@@ -62,6 +94,17 @@ export default function HomePage() {
 
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Restore this browser's theme + filters before anything else paints or
+  // fetches — a remount (e.g. back-navigation from /document/[id]) must not
+  // silently drop what the user picked, and must win over whatever's in the
+  // DB profile row (which may just be the untouched 'system' default).
+  useLayoutEffect(() => {
+    const storedTheme = readStoredTheme();
+    if (storedTheme) setTheme(storedTheme);
+    const storedFilters = readStoredFilters();
+    if (storedFilters) setFilters(storedFilters);
+  }, []);
+
   // Initial load
   useEffect(() => {
     const supabase = createClient();
@@ -84,7 +127,12 @@ export default function HomePage() {
             role: prof.role,
           });
           setLang((prof.language as Lang) || 'is');
-          setTheme((prof.theme as 'light' | 'dark' | 'system') || 'system');
+          // Only fall back to the DB's theme when this browser has never
+          // stored one of its own — otherwise this clobbers a manual toggle
+          // every time the page remounts.
+          if (!readStoredTheme()) {
+            setTheme((prof.theme as 'light' | 'dark' | 'system') || 'system');
+          }
         }
       }
 
@@ -138,7 +186,7 @@ export default function HomePage() {
       .from('documents')
       .select(selectCols)
       .eq('status', 'published')
-      .limit(50);
+      .limit(RESULTS_LIMIT);
 
     if (query.trim()) {
       // Plain ilike substring search rather than FTS: websearch_to_tsquery
@@ -234,9 +282,38 @@ export default function HomePage() {
         matchMedia('(prefers-color-scheme: dark)').matches);
     html.classList.toggle('dark', isDark);
     try {
-      localStorage.setItem('rb-theme', theme);
+      localStorage.setItem(THEME_KEY, theme);
     } catch {}
   }, [theme]);
+
+  // Persist filters for this browser so they survive a remount (e.g.
+  // navigating to a document and back), same reasoning as theme above.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        FILTERS_KEY,
+        JSON.stringify({
+          access: Array.from(filters.access),
+          sources: Array.from(filters.sources),
+          category: filters.category,
+        }),
+      );
+    } catch {}
+  }, [filters]);
+
+  async function handleThemeToggle() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    // Best-effort sync to the profile row too, so the choice follows the
+    // user across devices/browsers, not just this one via localStorage.
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) await supabase.from('profiles').update({ theme: next }).eq('id', user.id);
+    } catch {}
+  }
 
   async function signOut() {
     const supabase = createClient();
@@ -316,7 +393,7 @@ export default function HomePage() {
             {lang.toUpperCase()}
           </button>
           <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onClick={handleThemeToggle}
             className="text-paper-soft dark:text-ink-soft hover:text-brick-500 p-2 -m-1"
             title={t(lang, 'theme')}
           >
