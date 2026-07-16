@@ -146,9 +146,17 @@ export default function AdminDocumentsPage() {
   }
 
   async function togglePublish(doc: Document) {
+    const newStatus: 'published' | 'pending_review' = doc.status === 'published' ? 'pending_review' : 'published';
+    // Unpublishing is always allowed; publishing requires at least one
+    // category — an uncategorized doc can't be found by subject in the main
+    // library, so it shouldn't be publicly visible (see runner.ts's
+    // isUncategorized gate, which enforces the same rule on scraper writes).
+    if (newStatus === 'published' && (docCategories[doc.id] ?? []).length === 0) {
+      setFlash({ kind: 'err', text: 'Ekki hægt að birta óflokkað skjal — flokkaðu það fyrst (Flokka).' });
+      return;
+    }
     setBusyId(doc.id);
     const supabase = createClient();
-    const newStatus: 'published' | 'pending_review' = doc.status === 'published' ? 'pending_review' : 'published';
     const { error } = await supabase
       .from('documents')
       .update({ status: newStatus, metadata: withAdminOverride(doc) })
@@ -164,8 +172,22 @@ export default function AdminDocumentsPage() {
 
   async function bulkPublish(ids: string[]) {
     if (ids.length === 0) return;
+    // Same rule as togglePublish: never publish an uncategorized doc. Docs
+    // that are already published are left alone either way (re-affirming
+    // them is harmless, and this keeps a stray already-public doc from
+    // silently blocking the rest of a bulk selection).
+    const eligibleIds = ids.filter((id) => {
+      const doc = docs.find((d) => d.id === id);
+      return doc && (doc.status === 'published' || (docCategories[id] ?? []).length > 0);
+    });
+    const blockedCount = ids.length - eligibleIds.length;
+    if (eligibleIds.length === 0) {
+      setFlash({ kind: 'err', text: 'Öll valin skjöl eru óflokkuð — ekki hægt að birta. Flokkaðu þau fyrst.' });
+      return;
+    }
+
     setBulkWorking(true);
-    setBulkProgress({ done: 0, total: ids.length });
+    setBulkProgress({ done: 0, total: eligibleIds.length });
     const supabase = createClient();
     const CONCURRENCY = 8;
     let idx = 0;
@@ -173,9 +195,9 @@ export default function AdminDocumentsPage() {
     let errCount = 0;
 
     async function worker() {
-      while (idx < ids.length) {
+      while (idx < eligibleIds.length) {
         const i = idx++;
-        const doc = docs.find((d) => d.id === ids[i]);
+        const doc = docs.find((d) => d.id === eligibleIds[i]);
         if (!doc) continue;
         const { error } = await supabase
           .from('documents')
@@ -185,11 +207,11 @@ export default function AdminDocumentsPage() {
         setBulkProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
       }
     }
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, eligibleIds.length) }, worker));
 
     setFlash({
-      kind: errCount > 0 ? 'err' : 'ok',
-      text: `Birti ${okCount} skjöl${errCount > 0 ? `, ${errCount} mistókust` : ''}.`,
+      kind: errCount > 0 ? 'err' : blockedCount > 0 ? 'err' : 'ok',
+      text: `Birti ${okCount} skjöl${errCount > 0 ? `, ${errCount} mistókust` : ''}${blockedCount > 0 ? `, ${blockedCount} óflokkuð sleppt` : ''}.`,
     });
     setBulkWorking(false);
     setBulkProgress(null);
