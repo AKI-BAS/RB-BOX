@@ -36,8 +36,26 @@ export default async function DocumentPage({
 
   // doc.source_url is simply absent (undefined) from a `select('*')` result
   // if the column doesn't exist yet — safe without any extra guard.
+  // Canonical URL precedence (source_url over external_url) is the same
+  // rule the HMS adapters themselves follow: source_url is the adapter's
+  // guidanceUrl when supplied (hms-rb-blod-web's HTML source page),
+  // external_url is always populated as the fetched-file URL — for
+  // hms-rb-blod (the PDF archive, no distinct guidance page) they're the
+  // same hms.is PDF link either way.
   const guidanceUrl = doc.source_url ?? doc.external_url;
   const attributionUrl = doc.source_url ?? source?.base_url ?? null;
+
+  // "Skoða PDF": self-hosted docs (contributor uploads, and any legacy
+  // rows that still have a Storage copy) open the internal download route;
+  // everything else — including every HMS doc post-retrofit, which never
+  // gets a file_path — opens the canonical source URL directly in a new
+  // tab. Hidden only when neither exists.
+  const pdfHref = doc.file_path ? `/api/download/${doc.id}` : guidanceUrl;
+  const pdfOpensExternally = !doc.file_path && Boolean(guidanceUrl);
+  // "Opna hjá heimild" only adds information when Skoða PDF points at our
+  // own copy — if Skoða PDF already opens the source directly, a second
+  // identical link is just noise.
+  const showSourceLink = Boolean(doc.file_path) && Boolean(guidanceUrl);
 
   return (
     <div className="min-h-screen bg-paper-bg dark:bg-ink-bg text-paper-text dark:text-ink-text">
@@ -99,17 +117,19 @@ export default async function DocumentPage({
         )}
 
         <div className="flex flex-wrap gap-2 mb-8">
-          {doc.file_path && (
+          {pdfHref && (
             <a
-              href={`/api/download/${doc.id}`}
+              href={pdfHref}
+              target={pdfOpensExternally ? '_blank' : undefined}
+              rel={pdfOpensExternally ? 'noreferrer' : undefined}
               className="h-9 px-4 rounded-lg bg-brick-500 hover:bg-brick-600 text-white text-sm font-medium flex items-center gap-2"
             >
               ↓ Skoða PDF
             </a>
           )}
-          {guidanceUrl && (
+          {showSourceLink && (
             <a
-              href={guidanceUrl}
+              href={guidanceUrl ?? undefined}
               target="_blank"
               rel="noreferrer"
               className="h-9 px-4 rounded-lg border border-paper-border dark:border-ink-border hover:border-brick-500 text-sm flex items-center gap-2"
