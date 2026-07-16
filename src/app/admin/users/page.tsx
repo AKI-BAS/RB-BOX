@@ -94,7 +94,7 @@ export default function AdminUsersPage() {
         )}
       </form>
 
-      <div className="rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface overflow-hidden">
+      <div className="rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-[10px] uppercase tracking-wider text-paper-faint dark:text-ink-faint bg-paper-muted dark:bg-ink-muted">
             <tr>

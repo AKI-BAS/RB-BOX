@@ -45,7 +45,11 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen bg-paper-bg dark:bg-ink-bg text-paper-text dark:text-ink-text">
-      <div className="max-w-5xl mx-auto px-6 pt-6 pb-16">
+      {/* Wide enough for the documents table's 7 columns (title, source,
+          status, categories, tags, actions) without forcing horizontal
+          scroll on a normal desktop viewport — max-w-5xl (1024px) was too
+          narrow once that table grew past a handful of columns. */}
+      <div className="max-w-screen-2xl mx-auto px-6 pt-6 pb-16">
         {/* Header row */}
         <div className="flex items-center gap-3 mb-6">
           <Link
