@@ -135,6 +135,16 @@ export interface ScraperAdapter {
   /** Human name for logs. */
   name: string;
   /**
+   * Whether the runner should cache this source's PDFs into Supabase
+   * Storage (documents.file_path, and self-hosted document_files rows).
+   * Defaults to true (existing behavior) when omitted. RB-BOX is a search/
+   * discovery layer, not a document host — set this to false for a source
+   * whose PDFs should be downloaded only long enough to extract text
+   * (documents.extracted_text) and then discarded, with search results
+   * deep-linking back to the source's own URL instead of a Storage copy.
+   */
+  cachesPdf?: boolean;
+  /**
    * Yield discovered documents. The runner handles fetch/analyze/store per
    * doc, so adapters just need to walk the source's structure and emit
    * `DiscoveredDoc`s — with as much structured metadata as they can supply.

@@ -89,6 +89,11 @@ function toDiscoveredDoc(doc: PrismicDocument): DiscoveredDoc | null {
 const hmsRbBlodWeb: ScraperAdapter = {
   slug: 'hms-rb-blod-web',
   name: 'HMS · RB-blöð (vefur) og lífsferilsgreining',
+  // Same no-caching posture as hms-rb-blod.ts — this also stops the
+  // embedded pdfLinks (regulation references etc. found in the page body)
+  // from being self-hosted into document_files; they become external links
+  // to their own source URL instead (see runner.ts's resolvePdfLinks).
+  cachesPdf: false,
 
   async *discover(ctx: ScraperContext): AsyncIterable<DiscoveredDoc> {
     const config = ctx.config as WebConfig;

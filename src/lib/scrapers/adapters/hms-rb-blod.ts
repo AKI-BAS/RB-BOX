@@ -148,6 +148,13 @@ function deriveSourceRef(version: unknown, docId: string): string {
 const hmsRbBlod: ScraperAdapter = {
   slug: 'hms-rb-blod',
   name: 'HMS · Rb-leiðbeiningablöð',
+  // RB-BOX is a search/discovery layer, not a document host — 381 PDFs
+  // cached into Storage bloats the bucket for content that already lives
+  // permanently at a stable hms.is URL. The runner still downloads each PDF
+  // (in memory only) to extract text into documents.extracted_text and hash
+  // it for dedup, then discards the bytes; documents.file_path stays null
+  // and search results deep-link to external_url (the hms.is PDF) instead.
+  cachesPdf: false,
 
   async *discover(ctx: ScraperContext): AsyncIterable<DiscoveredDoc> {
     const config = ctx.config as RbConfig;

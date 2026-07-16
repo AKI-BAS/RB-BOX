@@ -192,7 +192,7 @@ export async function runScrape(opts: RunOptions): Promise<RunSummary> {
         break;
       }
       tally.discovered++;
-      const result = await processDiscoveredDoc(doc, source as Source, runId, rules, ctx);
+      const result = await processDiscoveredDoc(doc, source as Source, runId, rules, ctx, adapter.cachesPdf ?? true);
       switch (result.kind) {
         case 'added': tally.added++; break;
         case 'updated': tally.updated++; break;
@@ -364,17 +364,21 @@ async function fetchWithGentleRetry(
  * degrades to an external link rather than dropping the reference entirely
  * — so a host that's temporarily rate-limiting us doesn't sink the doc,
  * just its self-hosting; a later re-scrape can pick it up once it clears.
+ *
+ * When cachesPdf is false, self-hosting is skipped entirely — every link
+ * becomes an external reference to its own source URL, no fetch attempted.
  */
 async function resolvePdfLinks(
   ctx: ScraperContext,
   source: Source,
   links: Array<{ url: string; label?: string }>,
+  cachesPdf: boolean,
 ): Promise<ResolvedFile[]> {
   const supabase = createAdminClient();
   const resolved: ResolvedFile[] = [];
 
   for (const link of links) {
-    if (!isHmsHostedUrl(link.url)) {
+    if (!cachesPdf || !isHmsHostedUrl(link.url)) {
       resolved.push({ kind: 'external', file_path: null, url: link.url, label: link.label ?? null });
       continue;
     }
@@ -407,6 +411,7 @@ async function processDiscoveredDoc(
   runId: string,
   rules: RulesBundle,
   ctx: ScraperContext,
+  cachesPdf: boolean,
 ): Promise<CandidateResult> {
   const supabase = createAdminClient();
   const url = normalizeUrl(doc.url);
@@ -606,9 +611,15 @@ async function processDiscoveredDoc(
   // by subject and unfilterable — worse than just not showing it yet.
   const isUncategorized = resolved.category_ids.length === 0;
 
-  // h. Upload PDF to Storage if applicable
+  // h. Upload PDF to Storage if applicable — skipped entirely for sources
+  // marked cachesPdf: false. RB-BOX is a search/discovery layer, not a
+  // document host: bytes were already fetched (above, for hashing + text
+  // extraction) and are discarded once this function returns — nothing on
+  // disk to clean up, since they were never written anywhere but memory.
+  // file_path stays null; the frontend already falls back to external_url
+  // for the "open PDF" action (see document/[id]/page.tsx's guidanceUrl).
   let storagePath: string | null = null;
-  if (isPdf) {
+  if (isPdf && cachesPdf) {
     // Path: <source-slug>/<yyyy>/<hash>.pdf — hash prevents collisions
     const year = new Date().getFullYear();
     storagePath = `${source.slug}/${year}/${hash}.pdf`;
@@ -685,7 +696,7 @@ async function processDiscoveredDoc(
     if (!hasAdminOverride) {
       await syncDocumentCategories(supabase, existing.id, resolved.category_ids);
       if (caps.hasDocumentFiles && doc.pdfLinks && doc.pdfLinks.length > 0) {
-        const files = await resolvePdfLinks(ctx, source, doc.pdfLinks);
+        const files = await resolvePdfLinks(ctx, source, doc.pdfLinks, cachesPdf);
         await syncDocumentFiles(supabase, existing.id, files);
       }
     }
@@ -712,7 +723,7 @@ async function processDiscoveredDoc(
 
   await syncDocumentCategories(supabase, newDoc.id, resolved.category_ids);
   if (caps.hasDocumentFiles && doc.pdfLinks && doc.pdfLinks.length > 0) {
-    const files = await resolvePdfLinks(ctx, source, doc.pdfLinks);
+    const files = await resolvePdfLinks(ctx, source, doc.pdfLinks, cachesPdf);
     await syncDocumentFiles(supabase, newDoc.id, files);
   }
 
@@ -775,6 +786,7 @@ export async function importSingleUrl(opts: {
     runId,
     rules,
     ctx,
+    true, // manual admin URL-paste is out of scope for the no-caching retrofit — unchanged behavior
   );
 
   const isOk = result.kind === 'added' || result.kind === 'updated' || result.kind === 'skipped';
