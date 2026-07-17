@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
-import { PdfViewer, resolvePdfSrc, type PreviewableDoc } from '@/components/PdfViewer';
+import { PdfViewer } from '@/components/PdfViewer';
+import { resolvePdfSrc, type PreviewableDoc } from '@/lib/pdf-src';
 
 export type { PreviewableDoc };
 

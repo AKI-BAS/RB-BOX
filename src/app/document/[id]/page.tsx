@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { PdfViewer, resolvePdfSrc } from '@/components/PdfViewer';
+import { PdfViewer } from '@/components/PdfViewer';
+import { resolvePdfSrc } from '@/lib/pdf-src';
 import type { DocumentFile } from '@/types/database';
 
 export default async function DocumentPage({

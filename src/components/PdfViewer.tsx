@@ -1,33 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { resolvePdfSrc, type PreviewableDoc } from '@/lib/pdf-src';
 
-/** Just the fields a preview needs — works for both the public search results
- * row shape, the admin documents table row shape, and the document detail
- * page's server-fetched row (all come from `select('*')` on `documents`, so
- * this is always a safe subset). */
-export interface PreviewableDoc {
-  id: string;
-  title: string;
-  title_en?: string | null;
-  file_path?: string | null;
-  external_url?: string | null;
-  source_url?: string | null;
-  extracted_text?: string | null;
-}
-
-/**
- * The one place this priority is decided: our own signed-download route
- * (self-hosted primary file) → canonical source link (source_url, e.g. an
- * hms-rb-blod-web guidance page) → the fetched-file URL (external_url —
- * every HMS PDF-archive doc has this, since that adapter never gets a
- * file_path post-retrofit). Used by the modal, the inline detail-page
- * viewer, and the detail page's own "Skoða PDF" button href — one formula,
- * not reimplemented per call site.
- */
-export function resolvePdfSrc(doc: PreviewableDoc): string | null {
-  return doc.file_path ? `/api/download/${doc.id}` : doc.source_url ?? doc.external_url ?? null;
-}
+// Re-exported for existing call sites — the canonical definitions now live
+// in src/lib/pdf-src.ts (a plain, directive-free module) so a server
+// component can call resolvePdfSrc directly without crossing a 'use client'
+// boundary. Importing them here still works for client-side callers.
+export { resolvePdfSrc, type PreviewableDoc };
 
 // If the iframe hasn't fired `onLoad` within this window, the source is
 // either slow or (more likely for an external host) silently refusing to be
