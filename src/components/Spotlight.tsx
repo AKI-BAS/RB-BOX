@@ -1,6 +1,6 @@
 'use client';
 
-import { type RefObject, useMemo } from 'react';
+import { type RefObject, useMemo, useState } from 'react';
 import { t, type Lang } from '@/lib/i18n';
 import { Highlighted } from '@/components/search/Highlighted';
 import { AgeBadge } from '@/components/AgeBadge';
@@ -80,6 +80,86 @@ function ResultIcon({
   );
 }
 
+const BYGGINGARREGLUGERD_SLUG = 'byggingarreglugerd';
+const GREIN_BODY_TRUNCATE_AT = 1500;
+const GREIN_BODY_SHOW_CHARS = 1000;
+
+interface GreinBreadcrumb {
+  hluti: string;
+  kafli: string;
+  grein: string;
+}
+
+/**
+ * byggingarreglugerð's Hluti/Kafli/Grein hierarchy lives under
+ * metadata.scraper.adapter_meta (set by the adapter — see
+ * src/lib/scrapers/adapters/byggingarreglugerd.ts), not a top-level
+ * metadata.hluti/kafli. Falls back to parsing reference_code ("H.K.G") if
+ * adapter_meta is ever missing/incomplete, so a doc with only a bare
+ * reference_code still gets a breadcrumb instead of none showing at all.
+ */
+function getGreinBreadcrumb(doc: Document): GreinBreadcrumb | null {
+  const meta = (doc.metadata as any)?.scraper?.adapter_meta as
+    | { hluti?: string; kafli?: string; grein?: string }
+    | undefined;
+  if (meta?.hluti && meta?.kafli && meta?.grein) {
+    return {
+      hluti: meta.hluti,
+      kafli: `${meta.hluti}.${meta.kafli}`,
+      grein: `${meta.hluti}.${meta.kafli}.${meta.grein}`,
+    };
+  }
+  const parts = doc.reference_code?.split('.').filter(Boolean);
+  if (parts && parts.length === 3) {
+    const [h, k, g] = parts;
+    return { hluti: h, kafli: `${h}.${k}`, grein: `${h}.${k}.${g}` };
+  }
+  return null;
+}
+
+/** The stored title already carries its own number prefix ("1.1.1. Markmið")
+ * — redundant once the breadcrumb right above it already reads "Grein 1.1.1". */
+function cleanGreinTitle(title: string): string {
+  const stripped = title.replace(/^\d+(?:\.\d+){1,3}\.\s*/, '').trim();
+  return stripped || title;
+}
+
+/** Grein bodies are the full regulation text, not a snippet — long articles
+ * (>1500 chars) get a show more/less toggle instead of being cut off cold.
+ * A real subcomponent (not inline in .map()) so it can own its own expand
+ * state per row without breaking the rules of hooks. */
+function GreinBody({ text, terms, lang }: { text: string | null; terms: string[]; lang: Lang }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!text?.trim()) {
+    return (
+      <p className="mt-2 text-[12.5px] italic text-paper-faint dark:text-ink-faint">
+        {t(lang, 'contentUnavailable')}
+      </p>
+    );
+  }
+
+  const isLong = text.length > GREIN_BODY_TRUNCATE_AT;
+  const shown = isLong && !expanded ? `${text.slice(0, GREIN_BODY_SHOW_CHARS)}…` : text;
+
+  return (
+    <div className="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-paper-soft dark:text-ink-soft">
+      <Highlighted text={shown} terms={terms} />
+      {isLong && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="mt-1.5 block text-[11.5px] font-medium text-brick-500 hover:text-brick-600"
+        >
+          {expanded ? t(lang, 'showLess') : t(lang, 'showMore')}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Tokenize the user's query into unique lowercased words we can display
 // as "Matched on" chips. This is a display approximation — accurate to what
 // the user typed, which is the mental model that matters here.
@@ -111,6 +191,13 @@ export function Spotlight({
     sources.forEach((s) => (m[s.id] = s));
     return m;
   }, [sources]);
+
+  // Looked up by slug (a stable, semantic identifier already used elsewhere
+  // in this file, e.g. DOC_TYPE_LABEL) rather than a hardcoded source UUID.
+  const byggingarreglugerdSourceId = useMemo(
+    () => sources.find((s) => s.slug === BYGGINGARREGLUGERD_SLUG)?.id,
+    [sources],
+  );
 
   const activeCategoryName = useMemo(() => {
     if (!activeCategory) return null;
@@ -255,6 +342,9 @@ export function Spotlight({
               ].filter(Boolean) as string[];
               const title = lang === 'en' && doc.title_en ? doc.title_en : doc.title;
               const snippet = buildSnippet(doc.extracted_text, highlightTerms);
+              const isGrein =
+                Boolean(byggingarreglugerdSourceId) && doc.source_id === byggingarreglugerdSourceId;
+              const breadcrumb = isGrein ? getGreinBreadcrumb(doc) : null;
 
               return (
                 <li key={doc.id}>
@@ -276,26 +366,61 @@ export function Spotlight({
                     }`}
                   >
                     <ResultIcon doc={doc} accent={isTop} />
-                    <div className="flex-1 min-w-0">
-                      <div
-                        className={`text-[13.5px] truncate ${
-                          isTop ? 'font-medium' : ''
-                        }`}
-                      >
-                        <Highlighted text={title} terms={highlightTerms} />
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <div className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint truncate tracking-tight min-w-0 flex-1">
-                          {metaParts.join(' · ')}
+                    {isGrein ? (
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#FCEBEB] text-[#A32D2D] dark:bg-[rgba(163,45,45,0.2)] dark:text-[#F09595]">
+                            {sourceLabel ?? 'Byggingarreglugerð'}
+                          </span>
+                          {doc.published_date && (
+                            <span className="text-[10.5px] text-paper-faint dark:text-ink-faint shrink-0">
+                              {t(lang, 'lastAmended')}: {doc.published_date.slice(0, 10)}
+                            </span>
+                          )}
                         </div>
-                        <AgeBadge date={doc.published_date} locale={lang} />
+                        {breadcrumb && (
+                          <div className="mt-1 text-[10.5px] font-mono text-paper-faint dark:text-ink-faint">
+                            Hluti {breadcrumb.hluti} · Kafli {breadcrumb.kafli} · Grein {breadcrumb.grein}
+                          </div>
+                        )}
+                        <div className={`mt-1 text-[13.5px] ${isTop ? 'font-medium' : ''}`}>
+                          <Highlighted text={cleanGreinTitle(title)} terms={highlightTerms} />
+                        </div>
+                        <GreinBody text={doc.extracted_text} terms={highlightTerms} lang={lang} />
+                        {doc.external_url && (
+                          <a
+                            href={doc.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-brick-500 px-3 text-[11.5px] font-medium text-white transition hover:bg-brick-600"
+                          >
+                            ↗ {t(lang, 'viewOnSource')}
+                          </a>
+                        )}
                       </div>
-                      {snippet && (
-                        <p className="text-[11.5px] text-paper-soft dark:text-ink-soft opacity-70 line-clamp-2 mt-1">
-                          <Highlighted text={snippet} terms={highlightTerms} />
-                        </p>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className={`text-[13.5px] truncate ${
+                            isTop ? 'font-medium' : ''
+                          }`}
+                        >
+                          <Highlighted text={title} terms={highlightTerms} />
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <div className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint truncate tracking-tight min-w-0 flex-1">
+                            {metaParts.join(' · ')}
+                          </div>
+                          <AgeBadge date={doc.published_date} locale={lang} />
+                        </div>
+                        {snippet && (
+                          <p className="text-[11.5px] text-paper-soft dark:text-ink-soft opacity-70 line-clamp-2 mt-1">
+                            <Highlighted text={snippet} terms={highlightTerms} />
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {/* Distinct control from the row's own click-to-open — always
                         visible (not hover-only) so it's discoverable on touch. */}
                     <button
