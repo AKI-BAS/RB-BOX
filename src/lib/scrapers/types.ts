@@ -78,6 +78,16 @@ export interface DiscoveredDoc {
    * documents.extracted_text when present, skipping pdf-parse entirely.
    */
   bodyText?: string;
+  /**
+   * Adapter-specific structured data that doesn't fit any other field (e.g.
+   * byggingarreglugerd's Hluti/Kafli/Grein hierarchy) — merged verbatim into
+   * documents.metadata.scraper.adapter_meta. Deliberately separate from
+   * `categorization`: that field is reserved for RB-BOX's own subject-matter
+   * category provenance (rule/keyword/ai), decided by the runner itself —
+   * an adapter's own internal document hierarchy is a different concern and
+   * would conflict with that shape if crammed in alongside it.
+   */
+  adapterMeta?: Record<string, unknown>;
 }
 
 /** @deprecated use DiscoveredDoc — kept as an alias so older adapter code keeps compiling. */

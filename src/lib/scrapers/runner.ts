@@ -676,6 +676,7 @@ async function processDiscoveredDoc(
         suggested_categories: resolved.categories,
         needs_review: needsReview,
         needs_review_reason: needsReviewReason ?? null,
+        adapter_meta: (doc.adapterMeta ?? null) as unknown as Json,
       },
     },
   };
