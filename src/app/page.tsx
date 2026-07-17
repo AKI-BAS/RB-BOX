@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { t, type Lang } from '@/lib/i18n';
 import { BrowsePanel, type Filters } from '@/components/BrowsePanel';
 import { Spotlight } from '@/components/Spotlight';
+import { PdfPreviewModal } from '@/components/PdfPreviewModal';
 import { deriveSearchTerms } from '@/lib/search/highlight';
 import type { Document, Source, Category } from '@/types/database';
 
@@ -91,6 +92,7 @@ export default function HomePage() {
     full_name: string | null;
     role: string;
   } | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -460,10 +462,15 @@ export default function HomePage() {
               activeCategory={filters.category}
               ready={ready}
               onOpen={(id) => router.push(`/document/${id}`)}
+              onPreview={setPreviewDoc}
             />
           </div>
         </main>
       </div>
+
+      {previewDoc && (
+        <PdfPreviewModal doc={previewDoc} lang={lang} onClose={() => setPreviewDoc(null)} />
+      )}
     </div>
   );
 }

@@ -18,6 +18,7 @@ interface SpotlightProps {
   activeCategory: string | null;
   ready: boolean;
   onOpen: (id: string) => void;
+  onPreview: (doc: Document) => void;
 }
 
 const DOC_TYPE_LABEL: Record<string, string> = {
@@ -89,6 +90,7 @@ export function Spotlight({
   activeCategory,
   ready,
   onOpen,
+  onPreview,
 }: SpotlightProps) {
   const sourceById = useMemo(() => {
     const m: Record<string, Source> = {};
@@ -202,10 +204,18 @@ export function Spotlight({
 
               return (
                 <li key={doc.id}>
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onOpen(doc.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onOpen(doc.id);
+                      }
+                    }}
                     aria-label={title}
-                    className={`w-full flex items-start gap-3 pl-4 pr-3 py-3 text-left border-t border-paper-border dark:border-ink-border first:border-t-0 transition ${
+                    className={`group w-full flex items-start gap-3 pl-4 pr-3 py-3 text-left border-t border-paper-border dark:border-ink-border first:border-t-0 transition cursor-pointer ${
                       isTop
                         ? 'bg-brick-500/[0.06] border-l-2 border-l-brick-500 pl-[14px]'
                         : 'hover:bg-paper-muted dark:hover:bg-ink-muted'
@@ -232,10 +242,26 @@ export function Spotlight({
                         </p>
                       )}
                     </div>
+                    {/* Distinct control from the row's own click-to-open — always
+                        visible (not hover-only) so it's discoverable on touch. */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPreview(doc);
+                      }}
+                      title={lang === 'is' ? 'Forskoðun' : 'Preview'}
+                      aria-label={lang === 'is' ? 'Forskoðun' : 'Preview'}
+                      className="mt-0.5 shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-paper-faint dark:text-ink-faint hover:text-brick-500 hover:bg-paper-muted dark:hover:bg-ink-muted transition"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    </button>
                     {isTop && (
                       <kbd className="mt-1 ml-1 shrink-0">↵</kbd>
                     )}
-                  </button>
+                  </div>
                 </li>
               );
             })}

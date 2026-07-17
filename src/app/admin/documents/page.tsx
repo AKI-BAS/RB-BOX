@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { PdfPreviewModal } from '@/components/PdfPreviewModal';
 import type { Category, Document, Json, Source } from '@/types/database';
 
 type StatusFilter = 'all' | Document['status'];
@@ -60,6 +61,7 @@ export default function AdminDocumentsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
 
   async function load() {
     setLoading(true);
@@ -401,6 +403,13 @@ export default function AdminDocumentsPage() {
                   </td>
                   <td className="px-4 py-2.5 text-right align-top whitespace-nowrap">
                     <button
+                      onClick={() => setPreviewDoc(d)}
+                      title="Forskoða"
+                      className="h-7 px-2.5 rounded-md text-[11px] font-medium border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 hover:border-brick-500/40 transition mr-1.5"
+                    >
+                      Forskoða
+                    </button>
+                    <button
                       onClick={() => openAssign(d)}
                       className="h-7 px-2.5 rounded-md text-[11px] font-medium border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 hover:border-brick-500/40 transition mr-1.5"
                     >
@@ -479,6 +488,10 @@ export default function AdminDocumentsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {previewDoc && (
+        <PdfPreviewModal doc={previewDoc} lang="is" onClose={() => setPreviewDoc(null)} />
       )}
     </div>
   );
