@@ -263,6 +263,7 @@ export default function HomePage() {
             `description_en.ilike.${pattern}`,
             `reference_code.ilike.${pattern}`,
             `source_ref.ilike.${pattern}`,
+            `extracted_text.ilike.${pattern}`,
           );
         });
         const tagDocIds = tagDocIdsByTerm[i];
