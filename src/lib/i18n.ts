@@ -25,10 +25,6 @@ export const strings = {
     manuals: 'handbækur',
     // Grein card (byggingarreglugerð)
     lastAmended: 'Síðast breytt',
-    viewOnSource: 'Skoða á vef',
-    contentUnavailable: 'Efni ekki tiltækt',
-    showMore: 'Sýna meira',
-    showLess: 'Sýna minna',
     syncedAgo: 'Uppfært fyrir',
     hoursAgo: 'klst.',
     // Filters
@@ -138,10 +134,6 @@ export const strings = {
     didYouMean: 'Did you mean',
     manuals: 'manuals',
     lastAmended: 'Last amended',
-    viewOnSource: 'View on source',
-    contentUnavailable: 'Content not available',
-    showMore: 'Show more',
-    showLess: 'Show less',
     syncedAgo: 'Synced',
     hoursAgo: 'ago',
     access: 'Access',

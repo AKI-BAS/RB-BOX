@@ -1,6 +1,6 @@
 'use client';
 
-import { type RefObject, useMemo, useState } from 'react';
+import { type RefObject, useMemo } from 'react';
 import { t, type Lang } from '@/lib/i18n';
 import { Highlighted } from '@/components/search/Highlighted';
 import { AgeBadge } from '@/components/AgeBadge';
@@ -81,14 +81,6 @@ function ResultIcon({
 }
 
 const BYGGINGARREGLUGERD_SLUG = 'byggingarreglugerd';
-// Greinar are short regulation articles — the goal is "read the whole thing
-// while scrolling, no click needed" for a typical one. Live distribution
-// across all 439 rows: median 774 chars, p90 1908, p95 2407, p99 3433, only
-// 4 rows over 4000 — so 4000 collapses just the true outliers (~1%) instead
-// of ~18% of all greinar the old 1500 threshold caught, including ordinary
-// ones like a 2086-char article that only needed its first 1000 chars shown.
-const GREIN_BODY_TRUNCATE_AT = 4000;
-const GREIN_BODY_SHOW_CHARS = 3000;
 
 interface GreinBreadcrumb {
   hluti: string;
@@ -128,45 +120,6 @@ function getGreinBreadcrumb(doc: Document): GreinBreadcrumb | null {
 function cleanGreinTitle(title: string): string {
   const stripped = title.replace(/^\d+(?:\.\d+){1,3}\.\s*/, '').trim();
   return stripped || title;
-}
-
-/** Grein bodies are the full regulation text, not a snippet — always the
- * whole extracted_text, in both browse and search modes; `terms` only adds
- * <mark> highlighting on top and is empty (a no-op) when there's no query.
- * Only true outliers (>4000 chars, ~1% of greinar) get a show more/less
- * toggle instead of being cut off cold. A real subcomponent (not inline in
- * .map()) so it can own its own expand state per row without breaking the
- * rules of hooks. */
-function GreinBody({ text, terms, lang }: { text: string | null; terms: string[]; lang: Lang }) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (!text?.trim()) {
-    return (
-      <p className="mt-2 text-[12.5px] italic text-paper-faint dark:text-ink-faint">
-        {t(lang, 'contentUnavailable')}
-      </p>
-    );
-  }
-
-  const isLong = text.length > GREIN_BODY_TRUNCATE_AT;
-  const shown = isLong && !expanded ? `${text.slice(0, GREIN_BODY_SHOW_CHARS)}…` : text;
-
-  return (
-    <div className="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-paper-soft dark:text-ink-soft">
-      <Highlighted text={shown} terms={terms} />
-      {isLong && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          className="mt-1.5 block text-[11.5px] font-medium text-brick-500 hover:text-brick-600"
-        >
-          {expanded ? t(lang, 'showLess') : t(lang, 'showMore')}
-        </button>
-      )}
-    </div>
-  );
 }
 
 // Tokenize the user's query into unique lowercased words we can display
@@ -376,37 +329,37 @@ export function Spotlight({
                   >
                     <ResultIcon doc={doc} accent={isTop} />
                     {isGrein ? (
+                      // Compact, same shape as the standard card below (title
+                      // line, then a meta line + AgeBadge) — the badge and
+                      // breadcrumb are the only addition, replacing the plain
+                      // reference/source meta line since neither means much
+                      // for a grein on its own. No body text here by design:
+                      // the full extracted_text lives on the document detail
+                      // page (a click away), not inline in the results feed.
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#FCEBEB] text-[#A32D2D] dark:bg-[rgba(163,45,45,0.2)] dark:text-[#F09595]">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#FCEBEB] text-[#A32D2D] dark:bg-[rgba(163,45,45,0.2)] dark:text-[#F09595] shrink-0">
                             {sourceLabel ?? 'Byggingarreglugerð'}
                           </span>
-                          {doc.published_date && (
-                            <span className="text-[10.5px] text-paper-faint dark:text-ink-faint shrink-0">
-                              {t(lang, 'lastAmended')}: {doc.published_date.slice(0, 10)}
+                          {breadcrumb && (
+                            <span className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint truncate">
+                              Hluti {breadcrumb.hluti} · Kafli {breadcrumb.kafli} · Grein {breadcrumb.grein}
                             </span>
                           )}
                         </div>
-                        {breadcrumb && (
-                          <div className="mt-1 text-[10.5px] font-mono text-paper-faint dark:text-ink-faint">
-                            Hluti {breadcrumb.hluti} · Kafli {breadcrumb.kafli} · Grein {breadcrumb.grein}
-                          </div>
-                        )}
-                        <div className={`mt-1 text-[13.5px] ${isTop ? 'font-medium' : ''}`}>
+                        <div
+                          className={`text-[13.5px] truncate mt-0.5 ${
+                            isTop ? 'font-medium' : ''
+                          }`}
+                        >
                           <Highlighted text={cleanGreinTitle(title)} terms={highlightTerms} />
                         </div>
-                        <GreinBody text={doc.extracted_text} terms={highlightTerms} lang={lang} />
-                        {doc.external_url && (
-                          <a
-                            href={doc.external_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-brick-500 px-3 text-[11.5px] font-medium text-white transition hover:bg-brick-600"
-                          >
-                            ↗ {t(lang, 'viewOnSource')}
-                          </a>
-                        )}
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <div className="text-[10.5px] font-mono text-paper-faint dark:text-ink-faint truncate tracking-tight min-w-0 flex-1">
+                            {doc.published_date && `${t(lang, 'lastAmended')}: ${doc.published_date.slice(0, 10)}`}
+                          </div>
+                          <AgeBadge date={doc.published_date} locale={lang} />
+                        </div>
                       </div>
                     ) : (
                       <div className="flex-1 min-w-0">
