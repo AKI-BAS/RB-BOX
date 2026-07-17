@@ -81,8 +81,14 @@ function ResultIcon({
 }
 
 const BYGGINGARREGLUGERD_SLUG = 'byggingarreglugerd';
-const GREIN_BODY_TRUNCATE_AT = 1500;
-const GREIN_BODY_SHOW_CHARS = 1000;
+// Greinar are short regulation articles — the goal is "read the whole thing
+// while scrolling, no click needed" for a typical one. Live distribution
+// across all 439 rows: median 774 chars, p90 1908, p95 2407, p99 3433, only
+// 4 rows over 4000 — so 4000 collapses just the true outliers (~1%) instead
+// of ~18% of all greinar the old 1500 threshold caught, including ordinary
+// ones like a 2086-char article that only needed its first 1000 chars shown.
+const GREIN_BODY_TRUNCATE_AT = 4000;
+const GREIN_BODY_SHOW_CHARS = 3000;
 
 interface GreinBreadcrumb {
   hluti: string;
@@ -124,10 +130,13 @@ function cleanGreinTitle(title: string): string {
   return stripped || title;
 }
 
-/** Grein bodies are the full regulation text, not a snippet — long articles
- * (>1500 chars) get a show more/less toggle instead of being cut off cold.
- * A real subcomponent (not inline in .map()) so it can own its own expand
- * state per row without breaking the rules of hooks. */
+/** Grein bodies are the full regulation text, not a snippet — always the
+ * whole extracted_text, in both browse and search modes; `terms` only adds
+ * <mark> highlighting on top and is empty (a no-op) when there's no query.
+ * Only true outliers (>4000 chars, ~1% of greinar) get a show more/less
+ * toggle instead of being cut off cold. A real subcomponent (not inline in
+ * .map()) so it can own its own expand state per row without breaking the
+ * rules of hooks. */
 function GreinBody({ text, terms, lang }: { text: string | null; terms: string[]; lang: Lang }) {
   const [expanded, setExpanded] = useState(false);
 
