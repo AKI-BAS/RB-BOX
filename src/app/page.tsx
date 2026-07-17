@@ -7,13 +7,19 @@ import { t, type Lang } from '@/lib/i18n';
 import { BrowsePanel, type Filters } from '@/components/BrowsePanel';
 import { Spotlight } from '@/components/Spotlight';
 import { PdfPreviewModal } from '@/components/PdfPreviewModal';
-import { deriveSearchTerms } from '@/lib/search/highlight';
+import { deriveSearchTerms, expandCodeVariants } from '@/lib/search/highlight';
+import { buildVocabulary, suggestCorrection } from '@/lib/search/didyoumean';
 import type { Document, Source, Category } from '@/types/database';
 
 // Comfortably above the current library size (~170 published docs) so an
 // unfiltered or source-filtered browse shows everything, not just a recent
 // slice, without needing real pagination yet.
 const RESULTS_LIMIT = 500;
+
+// "Did you mean" only makes sense once results are scant enough that a typo
+// is the likely explanation — anything above this still looks like a normal
+// (if narrow) result set, not a search that silently found nothing useful.
+const FEW_RESULTS_THRESHOLD = 2;
 
 const THEME_KEY = 'rb-theme';
 const FILTERS_KEY = 'rb-filters';
@@ -95,6 +101,9 @@ export default function HomePage() {
     role: string;
   } | null>(null);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
+  // Vocabulary of known-good words for "did you mean" — built once from
+  // category/tag names + document titles (see initial-load effect below).
+  const [vocabulary, setVocabulary] = useState<Set<string>>(new Set());
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -145,12 +154,13 @@ export default function HomePage() {
         { data: cats },
         { data: docCounts },
         { data: latest },
+        { data: tagRows },
       ] = await Promise.all([
         supabase.from('sources').select('*').eq('is_active', true).order('name'),
         supabase.from('categories').select('*').order('sort_order'),
         supabase
           .from('documents')
-          .select('source_id, updated_at')
+          .select('source_id, updated_at, title, title_en')
           .eq('status', 'published'),
         supabase
           .from('documents')
@@ -159,6 +169,9 @@ export default function HomePage() {
           .order('updated_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
+        // Best-effort: only feeds the "did you mean" vocabulary below, so a
+        // missing/renamed table here shouldn't break the rest of the page.
+        supabase.from('tags').select('name'),
       ]);
 
       if (srcs) setSources(srcs);
@@ -172,6 +185,17 @@ export default function HomePage() {
         setTotalDocs(docCounts.length);
       }
       if (latest?.updated_at) setLastSync(latest.updated_at);
+
+      const vocabTexts: Array<string | null | undefined> = [];
+      (cats ?? []).forEach((c) => {
+        vocabTexts.push(c.name, c.name_en);
+      });
+      (tagRows ?? []).forEach((tg: any) => vocabTexts.push(tg.name));
+      (docCounts ?? []).forEach((d: any) => {
+        vocabTexts.push(d.title, d.title_en);
+      });
+      setVocabulary(buildVocabulary(vocabTexts));
+
       setReady(true);
     }
 
@@ -210,27 +234,37 @@ export default function HomePage() {
       // same .or() group as title/description. Resolve it in a separate
       // step per term: find the document ids tagged with a matching tag,
       // then fold those ids into that term's .or() group via id.in(...).
+      // A term typed compact ("ei60") is expanded to also try a spaced
+      // variant ("ei 60") so it matches stored text like "EI 60" — see
+      // expandCodeVariants' doc comment. Plain words are returned as a
+      // single-element array, so this is a no-op for the common case.
+      const termVariants = terms.map(expandCodeVariants);
+
       const tagDocIdsByTerm = await Promise.all(
-        terms.map(async (term) => {
+        termVariants.map(async (variants) => {
+          const orClause = variants.map((v) => `tags.name.ilike.%${v}%`).join(',');
           const { data: tagRows } = await supabase
             .from('document_tags')
             .select('document_id, tags!inner(name)')
-            .ilike('tags.name', `%${term}%`)
+            .or(orClause)
             .limit(500);
           return (tagRows ?? []).map((r: any) => r.document_id as string);
         }),
       );
 
-      terms.forEach((term, i) => {
-        const pattern = `%${term}%`;
-        const clauses = [
-          `title.ilike.${pattern}`,
-          `title_en.ilike.${pattern}`,
-          `description.ilike.${pattern}`,
-          `description_en.ilike.${pattern}`,
-          `reference_code.ilike.${pattern}`,
-          `source_ref.ilike.${pattern}`,
-        ];
+      termVariants.forEach((variants, i) => {
+        const clauses: string[] = [];
+        variants.forEach((v) => {
+          const pattern = `%${v}%`;
+          clauses.push(
+            `title.ilike.${pattern}`,
+            `title_en.ilike.${pattern}`,
+            `description.ilike.${pattern}`,
+            `description_en.ilike.${pattern}`,
+            `reference_code.ilike.${pattern}`,
+            `source_ref.ilike.${pattern}`,
+          );
+        });
         const tagDocIds = tagDocIdsByTerm[i];
         if (tagDocIds.length > 0) {
           clauses.push(`id.in.(${tagDocIds.join(',')})`);
@@ -337,6 +371,15 @@ export default function HomePage() {
     () => relativeSync(lang, lastSync),
     [lang, lastSync],
   );
+
+  // "Did you mean" — only worth computing once results have actually loaded
+  // for this query and are scant enough that a typo is a plausible cause;
+  // suggestCorrection itself also returns null when nothing changed (query
+  // words are already in the vocabulary, or no close-enough match exists).
+  const suggestion = useMemo(() => {
+    if (!ready || !query.trim() || results.length > FEW_RESULTS_THRESHOLD) return null;
+    return suggestCorrection(query, vocabulary);
+  }, [ready, query, results.length, vocabulary]);
 
   return (
     <div className="min-h-screen bg-paper-bg dark:bg-ink-bg text-paper-text dark:text-ink-text">
@@ -469,6 +512,8 @@ export default function HomePage() {
               activeCategory={filters.category}
               hasActiveFilters={activeFilterCount > 0}
               onClearFilters={() => setFilters({ access: new Set(), sources: new Set(), category: null })}
+              suggestion={suggestion}
+              onSuggestionClick={setQuery}
               ready={ready}
               onOpen={(id) => router.push(`/document/${id}`)}
               onPreview={setPreviewDoc}

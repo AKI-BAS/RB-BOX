@@ -4,7 +4,7 @@ import { type RefObject, useMemo } from 'react';
 import { t, type Lang } from '@/lib/i18n';
 import { Highlighted } from '@/components/search/Highlighted';
 import { AgeBadge } from '@/components/AgeBadge';
-import { deriveSearchTerms, buildSnippet } from '@/lib/search/highlight';
+import { deriveSearchTerms, expandCodeVariants, buildSnippet } from '@/lib/search/highlight';
 import type { Document, Source, Category } from '@/types/database';
 
 interface SpotlightProps {
@@ -21,6 +21,11 @@ interface SpotlightProps {
    * yet", which look identical if this signal is missing (see onClearFilters). */
   hasActiveFilters: boolean;
   onClearFilters: () => void;
+  /** Corrected query string to offer as "Áttir þú við: …?", or null when
+   * there's nothing worth suggesting (see suggestCorrection in
+   * lib/search/didyoumean.ts for when the parent computes this). */
+  suggestion: string | null;
+  onSuggestionClick: (term: string) => void;
   ready: boolean;
   onOpen: (id: string) => void;
   onPreview: (doc: Document) => void;
@@ -95,6 +100,8 @@ export function Spotlight({
   activeCategory,
   hasActiveFilters,
   onClearFilters,
+  suggestion,
+  onSuggestionClick,
   ready,
   onOpen,
   onPreview,
@@ -115,7 +122,13 @@ export function Spotlight({
   const matchTerms = tokenize(query);
   // Same derivation runSearch() uses to build the ilike query — highlighting
   // must match exactly what the DB matched on, not an independent tokenizer.
-  const highlightTerms = useMemo(() => deriveSearchTerms(query), [query]);
+  // Also expanded through expandCodeVariants so a compact code query ("ei60")
+  // highlights a spaced occurrence in the text ("EI 60") too, same as it's
+  // matched in the query itself.
+  const highlightTerms = useMemo(
+    () => deriveSearchTerms(query).flatMap(expandCodeVariants),
+    [query],
+  );
 
   return (
     <div className="rounded-xl bg-paper-surface dark:bg-ink-surface border border-paper-border dark:border-ink-border shadow-sm shadow-black/[0.04] overflow-hidden flex flex-col sm:h-[calc(100vh-6rem)]">
@@ -160,6 +173,23 @@ export function Spotlight({
               )}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* "Did you mean" — shown whenever the parent found a plausible
+          correction for a scant-results query, independent of whether the
+          empty-state or a thin results list renders below it. */}
+      {ready && suggestion && (
+        <div className="shrink-0 px-4 py-2 text-[11.5px] border-b border-paper-border dark:border-ink-border flex items-center gap-1.5 flex-wrap">
+          <span className="text-paper-faint dark:text-ink-faint">
+            {t(lang, 'didYouMean')}:
+          </span>
+          <button
+            onClick={() => onSuggestionClick(suggestion)}
+            className="text-brick-500 hover:text-brick-600 font-medium underline decoration-dotted"
+          >
+            {suggestion}
+          </button>
         </div>
       )}
 

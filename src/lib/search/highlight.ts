@@ -10,6 +10,26 @@ export function deriveSearchTerms(query: string): string[] {
   return cleaned.split(/\s+/).filter(Boolean);
 }
 
+/**
+ * A term typed with no space/punctuation between a letter-run and a
+ * digit-run (e.g. "ei60", "F30") won't substring-match stored text that
+ * has one (e.g. "EI 60") — ilike is case-insensitive but not spacing-
+ * insensitive. A query already typed WITH a space ("ei 60") doesn't need
+ * this: deriveSearchTerms splits it into two independent terms ("ei",
+ * "60"), and each already substring-matches "EI 60", "EI60", or "EI-60"
+ * on its own — the gap is one-directional. Expanding the compact form to
+ * also try a spaced variant closes it without a schema change.
+ */
+export function expandCodeVariants(term: string): string[] {
+  const runs = term.match(/\p{L}+|\d+/gu);
+  if (!runs || runs.length < 2) return [term];
+  const hasLetters = runs.some((r) => /\p{L}/u.test(r));
+  const hasDigits = runs.some((r) => /\d/u.test(r));
+  if (!hasLetters || !hasDigits) return [term];
+  const spaced = runs.join(' ');
+  return spaced === term ? [term] : [term, spaced];
+}
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
