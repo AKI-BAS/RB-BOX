@@ -16,6 +16,11 @@ interface SpotlightProps {
   sources: Source[];
   categories: Category[];
   activeCategory: string | null;
+  /** True when any Browse-panel filter (access/source/category) is applied —
+   * distinguishes "your filters matched nothing" from "you haven't searched
+   * yet", which look identical if this signal is missing (see onClearFilters). */
+  hasActiveFilters: boolean;
+  onClearFilters: () => void;
   ready: boolean;
   onOpen: (id: string) => void;
   onPreview: (doc: Document) => void;
@@ -88,6 +93,8 @@ export function Spotlight({
   sources,
   categories,
   activeCategory,
+  hasActiveFilters,
+  onClearFilters,
   ready,
   onOpen,
   onPreview,
@@ -162,10 +169,27 @@ export function Spotlight({
           …
         </div>
       ) : results.length === 0 ? (
-        <div className="p-8 text-center text-xs text-paper-faint dark:text-ink-faint sm:flex-1 sm:flex sm:items-center sm:justify-center">
-          {query.trim()
-            ? t(lang, 'noResults')
-            : `${t(lang, 'startTyping')} [.`}
+        <div className="p-8 text-center text-xs text-paper-faint dark:text-ink-faint sm:flex-1 sm:flex sm:flex-col sm:items-center sm:justify-center gap-3">
+          {/* A query or an active filter that matches nothing is a genuine
+              "no results" state, not "you haven't searched yet" — those look
+              identical without checking hasActiveFilters too, which is
+              exactly what made a stuck zero-matching filter look like a
+              broken search (see commit fixing this). */}
+          {query.trim() || hasActiveFilters ? (
+            <>
+              <span>{t(lang, 'noResults')}</span>
+              {hasActiveFilters && (
+                <button
+                  onClick={onClearFilters}
+                  className="h-7 px-3 rounded-md text-[11px] font-medium bg-brick-500 hover:bg-brick-600 text-white transition"
+                >
+                  {t(lang, 'clearAll')}
+                </button>
+              )}
+            </>
+          ) : (
+            `${t(lang, 'startTyping')} [.`
+          )}
         </div>
       ) : (
         <>

@@ -33,7 +33,9 @@ function readStoredFilters(): Filters | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return {
-      access: new Set(parsed.access ?? []),
+      // Deliberately NOT restoring access — see the persist-effect below for
+      // why. Any older stored value (from before this fix) is just ignored.
+      access: new Set(),
       sources: new Set(parsed.sources ?? []),
       category: parsed.category ?? null,
     };
@@ -290,12 +292,17 @@ export default function HomePage() {
 
   // Persist filters for this browser so they survive a remount (e.g.
   // navigating to a document and back), same reasoning as theme above.
+  // access_level is deliberately excluded: it's the one filter that can
+  // silently zero out every result (e.g. "Áskrift"/paid, of which there are
+  // currently no published docs) — surviving across sessions, that's a trap
+  // that makes search look completely broken with no visible cause. Source
+  // and category are safe to persist; a stale choice there still narrows
+  // sensibly rather than hiding everything.
   useEffect(() => {
     try {
       localStorage.setItem(
         FILTERS_KEY,
         JSON.stringify({
-          access: Array.from(filters.access),
           sources: Array.from(filters.sources),
           category: filters.category,
         }),
@@ -460,6 +467,8 @@ export default function HomePage() {
               sources={sources}
               categories={categories}
               activeCategory={filters.category}
+              hasActiveFilters={activeFilterCount > 0}
+              onClearFilters={() => setFilters({ access: new Set(), sources: new Set(), category: null })}
               ready={ready}
               onOpen={(id) => router.push(`/document/${id}`)}
               onPreview={setPreviewDoc}
