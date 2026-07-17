@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { PdfViewer, resolvePdfSrc } from '@/components/PdfViewer';
 import type { DocumentFile } from '@/types/database';
 
 export default async function DocumentPage({
@@ -49,13 +50,16 @@ export default async function DocumentPage({
   // rows that still have a Storage copy) open the internal download route;
   // everything else — including every HMS doc post-retrofit, which never
   // gets a file_path — opens the canonical source URL directly in a new
-  // tab. Hidden only when neither exists.
-  const pdfHref = doc.file_path ? `/api/download/${doc.id}` : guidanceUrl;
+  // tab. Hidden only when neither exists. Same formula as the inline
+  // preview below and the search-results preview modal — resolvePdfSrc is
+  // the one place this priority is decided.
+  const pdfHref = resolvePdfSrc(doc);
   const pdfOpensExternally = !doc.file_path && Boolean(guidanceUrl);
   // "Opna hjá heimild" only adds information when Skoða PDF points at our
   // own copy — if Skoða PDF already opens the source directly, a second
   // identical link is just noise.
   const showSourceLink = Boolean(doc.file_path) && Boolean(guidanceUrl);
+  const textPreview = doc.extracted_text?.trim().slice(0, 4000) || null;
 
   return (
     <div className="min-h-screen bg-paper-bg dark:bg-ink-bg text-paper-text dark:text-ink-text">
@@ -178,6 +182,24 @@ export default async function DocumentPage({
             </>
           )}
         </dl>
+
+        {/* Inline preview — same source-priority + fallback as the search
+            results preview modal, just embedded directly on the page
+            instead of behind a click. */}
+        <div className="mt-8">
+          <h2 className="text-xs uppercase tracking-wide text-paper-faint dark:text-ink-faint mb-2">
+            Forskoðun
+          </h2>
+          <div className="rounded-xl border border-paper-border dark:border-ink-border overflow-hidden">
+            <PdfViewer
+              pdfSrc={pdfHref}
+              title={doc.title}
+              textPreview={textPreview}
+              lang="is"
+              className="h-[60vh] sm:h-[75vh]"
+            />
+          </div>
+        </div>
       </main>
     </div>
   );
