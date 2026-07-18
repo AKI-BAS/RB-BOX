@@ -4,9 +4,22 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import type { Category, Database } from '@/types/database';
 
+// `path` is a Postgres ltree column: dot-separated labels, and — verified
+// live against this DB — a label may NOT contain whitespace (raises a
+// "ltree syntax error"), though hyphens/accented Icelandic letters/case are
+// all fine here. A slug typed with a space is a very easy admin mistake to
+// make and is the main real-world trigger for the insert silently failing
+// below; normalizing it as you type prevents that instead of just failing
+// later.
+function slugify(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
 export default function AdminCategoriesPage() {
   const [cats, setCats] = useState<Category[]>([]);
   const [form, setForm] = useState({ slug: '', name: '', name_en: '', parent_id: '' });
+  const [creating, setCreating] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   async function load() {
     const supabase = createClient();
@@ -17,20 +30,33 @@ export default function AdminCategoriesPage() {
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    const supabase = createClient();
-    const parent = cats.find((c) => c.id === form.parent_id);
-    // path = parent.path + '.' + slug   (or just slug for roots)
-    const path = parent ? `${parent.path}.${form.slug}` : form.slug;
-    const insertPayload: Database['public']['Tables']['categories']['Insert'] = {
-      slug: parent ? `${parent.slug}.${form.slug}` : form.slug,
-      path,
-      name: form.name,
-      name_en: form.name_en || null,
-      parent_id: form.parent_id || null,
-    };
-    await supabase.from('categories').insert(insertPayload);
-    setForm({ slug: '', name: '', name_en: '', parent_id: '' });
-    load();
+    setCreating(true);
+    setMessage(null);
+    try {
+      const supabase = createClient();
+      const parent = cats.find((c) => c.id === form.parent_id);
+      // path = parent.path + '.' + slug   (or just slug for roots)
+      const path = parent ? `${parent.path}.${form.slug}` : form.slug;
+      const insertPayload: Database['public']['Tables']['categories']['Insert'] = {
+        slug: parent ? `${parent.slug}.${form.slug}` : form.slug,
+        path,
+        name: form.name,
+        name_en: form.name_en || null,
+        parent_id: form.parent_id || null,
+      };
+      // This previously wasn't checked at all — a failed insert (duplicate
+      // slug/path being the most common cause) looked exactly like "the
+      // category doesn't show up", with the form quietly clearing and
+      // load() just reloading the unchanged list. Now surfaced explicitly.
+      const { error } = await supabase.from('categories').insert(insertPayload);
+      if (error) throw new Error(error.message);
+      setForm({ slug: '', name: '', name_en: '', parent_id: '' });
+      await load();
+    } catch (err: any) {
+      setMessage(`Villa: ${err.message}`);
+    } finally {
+      setCreating(false);
+    }
   }
 
   const roots = cats.filter((c) => !c.parent_id);
@@ -51,7 +77,7 @@ export default function AdminCategoriesPage() {
           ))}
         </select>
         <input placeholder="slug" required value={form.slug}
-               onChange={(e) => setForm({ ...form, slug: e.target.value })}
+               onChange={(e) => setForm({ ...form, slug: slugify(e.target.value) })}
                className="h-9 px-3 rounded-md bg-transparent border border-paper-border dark:border-ink-border text-sm" />
         <input placeholder="Nafn (IS)" required value={form.name}
                onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -59,9 +85,13 @@ export default function AdminCategoriesPage() {
         <input placeholder="Name (EN)" value={form.name_en}
                onChange={(e) => setForm({ ...form, name_en: e.target.value })}
                className="h-9 px-3 rounded-md bg-transparent border border-paper-border dark:border-ink-border text-sm" />
-        <button type="submit" className="col-span-4 h-8 rounded-md bg-brick-500 text-white text-xs font-medium hover:bg-brick-600">
-          Bæta við
+        <button type="submit" disabled={creating}
+                className="col-span-4 h-8 rounded-md bg-brick-500 text-white text-xs font-medium hover:bg-brick-600 disabled:opacity-60">
+          {creating ? '…' : 'Bæta við'}
         </button>
+        {message && (
+          <div className="col-span-4 text-xs text-paper-soft dark:text-ink-soft">{message}</div>
+        )}
       </form>
 
       <div className="rounded-xl border border-paper-border dark:border-ink-border bg-paper-surface dark:bg-ink-surface p-4">
