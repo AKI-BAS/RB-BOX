@@ -17,6 +17,7 @@ function generatePassword(length = 16): string {
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<Profile[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [form, setForm] = useState({
     username: '',
     password: '',
@@ -34,6 +35,48 @@ export default function AdminUsersPage() {
   const [pwVisible, setPwVisible] = useState(false);
   const [pwSaving, setPwSaving] = useState(false);
   const [pwMessage, setPwMessage] = useState<string | null>(null);
+
+  // Delete-account panel state — one row open at a time, type-to-confirm.
+  const [delUserId, setDelUserId] = useState<string | null>(null);
+  const [delConfirmText, setDelConfirmText] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+  const [delMessage, setDelMessage] = useState<string | null>(null);
+
+  function openDeletePanel(userId: string) {
+    setDelUserId(userId);
+    setDelConfirmText('');
+    setDelMessage(null);
+  }
+
+  function closeDeletePanel() {
+    setDelUserId(null);
+    setDelConfirmText('');
+    setDelMessage(null);
+  }
+
+  async function deleteUser(u: Profile) {
+    if (delConfirmText !== u.username) return;
+    setDelBusy(true);
+    setDelMessage(null);
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: u.id }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Failed');
+      // Optimistic: drop the row immediately rather than reloading the
+      // whole list — same reasoning as the button-speed fixes elsewhere
+      // in admin (documents/sources).
+      setUsers((prev) => prev.filter((p) => p.id !== u.id));
+      closeDeletePanel();
+    } catch (err: any) {
+      setDelMessage(`Villa: ${err.message}`);
+    } finally {
+      setDelBusy(false);
+    }
+  }
 
   function openPasswordPanel(userId: string) {
     setPwUserId(userId);
@@ -75,11 +118,12 @@ export default function AdminUsersPage() {
 
   async function load() {
     const supabase = createClient();
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const [{ data }, { data: { user } }] = await Promise.all([
+      supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+      supabase.auth.getUser(),
+    ]);
     if (data) setUsers(data);
+    setCurrentUserId(user?.id ?? null);
   }
   useEffect(() => { load(); }, []);
 
@@ -173,24 +217,79 @@ export default function AdminUsersPage() {
                     <span className={u.role === 'admin' ? 'text-brick-500 font-medium' : ''}>{u.role}</span>
                   </td>
                   <td className="px-4 py-2 text-xs text-paper-faint dark:text-ink-faint uppercase">{u.access_level}</td>
-                  <td className="px-4 py-2">
+                  <td className="px-4 py-2 whitespace-nowrap">
                     {pwUserId === u.id ? (
                       <button
                         onClick={closePasswordPanel}
-                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500"
+                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 mr-1.5"
                       >
                         Hætta við
                       </button>
                     ) : (
                       <button
                         onClick={() => openPasswordPanel(u.id)}
-                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500"
+                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500 mr-1.5"
                       >
                         Breyta lykilorði
                       </button>
                     )}
+                    {delUserId === u.id ? (
+                      <button
+                        onClick={closeDeletePanel}
+                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-paper-soft dark:text-ink-soft hover:text-brick-500"
+                      >
+                        Hætta við
+                      </button>
+                    ) : u.id === currentUserId ? (
+                      <button
+                        disabled
+                        title="Ekki hægt að eyða eigin notanda"
+                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-paper-faint dark:text-ink-faint opacity-50 cursor-not-allowed"
+                      >
+                        Eyða
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => openDeletePanel(u.id)}
+                        className="h-7 px-2.5 rounded-md text-xs border border-paper-border dark:border-ink-border text-brick-500 hover:bg-brick-500/10"
+                      >
+                        Eyða
+                      </button>
+                    )}
                   </td>
                 </tr>
+                {delUserId === u.id && (
+                  <tr className="border-t border-paper-border dark:border-ink-border bg-brick-500/[0.04]">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-paper-soft dark:text-ink-soft">
+                          Til að eyða <span className="font-mono">{u.username}</span> varanlega, skrifaðu notandanafnið til staðfestingar:
+                        </span>
+                        <input
+                          type="text"
+                          value={delConfirmText}
+                          onChange={(e) => setDelConfirmText(e.target.value)}
+                          placeholder={u.username}
+                          className="h-8 px-3 rounded-md bg-transparent border border-paper-border dark:border-ink-border text-sm w-40 font-mono"
+                        />
+                        <button
+                          type="button"
+                          disabled={delBusy || delConfirmText !== u.username}
+                          onClick={() => deleteUser(u)}
+                          className="h-8 px-3 rounded-md bg-brick-500 text-white text-xs font-medium hover:bg-brick-600 disabled:opacity-40"
+                        >
+                          {delBusy ? '…' : 'Eyða notanda varanlega'}
+                        </button>
+                        {delMessage && (
+                          <span className="text-xs text-paper-soft dark:text-ink-soft">{delMessage}</span>
+                        )}
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-paper-faint dark:text-ink-faint">
+                        Þetta eyðir notandaaðgangnum varanlega. Skjöl sem notandinn hefur hlaðið upp haldast — aðeins tengingin við notandann er fjarlægð.
+                      </p>
+                    </td>
+                  </tr>
+                )}
                 {pwUserId === u.id && (
                   <tr key={`${u.id}-pw`} className="border-t border-paper-border dark:border-ink-border bg-paper-muted dark:bg-ink-muted">
                     <td colSpan={6} className="px-4 py-3">
