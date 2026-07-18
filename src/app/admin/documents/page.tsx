@@ -126,20 +126,32 @@ export default function AdminDocumentsPage() {
     const supabase = createClient();
     try {
       const doc = docs.find((d) => d.id === docId);
-      await supabase.from('document_categories').delete().eq('document_id', docId);
-      await supabase.from('document_categories').insert(
+      const { error: delErr } = await supabase.from('document_categories').delete().eq('document_id', docId);
+      if (delErr) throw delErr;
+      const { error: insErr } = await supabase.from('document_categories').insert(
         assignSelection.map((category_id, i) => ({ document_id: docId, category_id, is_primary: i === 0 })),
       );
+      if (insErr) throw insErr;
       // Manual categorization is an explicit review decision — publish it,
       // and lock the override so a future re-scrape doesn't recompute status
       // or silently overwrite the categories just chosen here.
-      await supabase.from('documents').update({
+      const nextMetadata: Json = doc
+        ? withAdminOverride(doc)
+        : ({ admin_override: { locked: true, at: new Date().toISOString() } } as unknown as Json);
+      const { error: updErr } = await supabase.from('documents').update({
         status: 'published',
-        metadata: doc ? withAdminOverride(doc) : { admin_override: { locked: true, at: new Date().toISOString() } },
+        metadata: nextMetadata,
       }).eq('id', docId);
+      if (updErr) throw updErr;
+
+      // Patch local state instead of a full load() (documents + sources +
+      // categories + a document_categories join over every loaded row) —
+      // we already know exactly what changed, so there's nothing that
+      // reload would tell us that we don't already have.
+      setDocCategories((prev) => ({ ...prev, [docId]: assignSelection }));
+      setDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, status: 'published', metadata: nextMetadata } : d)));
       setFlash({ kind: 'ok', text: 'Flokkun vistuð og skjal birt.' });
       setAssignFor(null);
-      load();
     } catch (err) {
       setFlash({ kind: 'err', text: err instanceof Error ? err.message : 'Villa við að vista' });
     } finally {
@@ -159,15 +171,18 @@ export default function AdminDocumentsPage() {
     }
     setBusyId(doc.id);
     const supabase = createClient();
+    const nextMetadata = withAdminOverride(doc);
     const { error } = await supabase
       .from('documents')
-      .update({ status: newStatus, metadata: withAdminOverride(doc) })
+      .update({ status: newStatus, metadata: nextMetadata })
       .eq('id', doc.id);
     if (error) {
       setFlash({ kind: 'err', text: error.message });
     } else {
+      // Same reasoning as saveAssign above — patch the one row we know
+      // changed instead of refetching the whole page's worth of data.
+      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, status: newStatus, metadata: nextMetadata } : d)));
       setFlash({ kind: 'ok', text: newStatus === 'published' ? 'Skjal birt.' : 'Skjal falið.' });
-      await load();
     }
     setBusyId(null);
   }
@@ -195,21 +210,31 @@ export default function AdminDocumentsPage() {
     let idx = 0;
     let okCount = 0;
     let errCount = 0;
+    const succeededMetadata: Record<string, Json> = {};
 
     async function worker() {
       while (idx < eligibleIds.length) {
         const i = idx++;
         const doc = docs.find((d) => d.id === eligibleIds[i]);
         if (!doc) continue;
+        const nextMetadata = withAdminOverride(doc);
         const { error } = await supabase
           .from('documents')
-          .update({ status: 'published', metadata: withAdminOverride(doc) })
+          .update({ status: 'published', metadata: nextMetadata })
           .eq('id', doc.id);
-        if (error) errCount++; else okCount++;
+        if (error) { errCount++; } else { okCount++; succeededMetadata[doc.id] = nextMetadata; }
         setBulkProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
       }
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, eligibleIds.length) }, worker));
+
+    // Patch every row that actually succeeded instead of a full load() —
+    // same reasoning as togglePublish/saveAssign, just applied per-row here.
+    setDocs((prev) =>
+      prev.map((d) =>
+        succeededMetadata[d.id] ? { ...d, status: 'published', metadata: succeededMetadata[d.id] } : d,
+      ),
+    );
 
     setFlash({
       kind: errCount > 0 ? 'err' : blockedCount > 0 ? 'err' : 'ok',
@@ -218,7 +243,6 @@ export default function AdminDocumentsPage() {
     setBulkWorking(false);
     setBulkProgress(null);
     setSelectedIds(new Set());
-    await load();
   }
 
   function toggleSelected(id: string) {

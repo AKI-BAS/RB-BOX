@@ -133,16 +133,29 @@ export default function AdminSourcesPage() {
     load();
   }
 
+  // Both toggles used to end with a full load() — sources + a published-doc
+  // count scan + an extra fetch to /api/admin/scrape/runs — just to reflect
+  // one boolean flip, with no loading indicator on the button either, so a
+  // click looked like it did nothing until that whole reload finished. A
+  // local optimistic patch (reverted on error) makes the toggle instant.
   async function toggleActive(id: string, is_active: boolean) {
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, is_active: !is_active } : s)));
     const supabase = createClient();
-    await supabase.from('sources').update({ is_active: !is_active }).eq('id', id);
-    load();
+    const { error } = await supabase.from('sources').update({ is_active: !is_active }).eq('id', id);
+    if (error) {
+      setSources((prev) => prev.map((s) => (s.id === id ? { ...s, is_active } : s)));
+      setFlash({ kind: 'err', text: error.message });
+    }
   }
 
   async function toggleAutoPublish(id: string, auto_publish: boolean) {
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, auto_publish: !auto_publish } : s)));
     const supabase = createClient();
-    await supabase.from('sources').update({ auto_publish: !auto_publish }).eq('id', id);
-    load();
+    const { error } = await supabase.from('sources').update({ auto_publish: !auto_publish }).eq('id', id);
+    if (error) {
+      setSources((prev) => prev.map((s) => (s.id === id ? { ...s, auto_publish } : s)));
+      setFlash({ kind: 'err', text: error.message });
+    }
   }
 
   async function runNow(source: Source) {
