@@ -10,8 +10,14 @@ export interface AdminTabsProps {
 export function AdminTabs({ tabs }: AdminTabsProps) {
   const pathname = usePathname();
 
+  // overflow-x-auto alone isn't enough: per the CSS spec, when one axis is
+  // set to anything but 'visible', the browser computes the OTHER (unset)
+  // axis as 'auto' too — 'visible' can't be mixed with a non-visible value
+  // on the perpendicular axis. Left unset, that silently made this
+  // horizontal tab strip vertically scrollable too; overflow-y-hidden pins
+  // it to horizontal-only.
   return (
-    <nav className="border-b border-paper-border dark:border-ink-border flex gap-1 mb-8 overflow-x-auto">
+    <nav className="border-b border-paper-border dark:border-ink-border flex gap-1 mb-8 overflow-x-auto overflow-y-hidden">
       {tabs.map((tab) => {
         const active = pathname === tab.href || pathname?.startsWith(tab.href + '/');
         return (

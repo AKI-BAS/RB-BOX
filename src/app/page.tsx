@@ -347,7 +347,21 @@ export default function HomePage() {
   }, [filters]);
 
   async function handleThemeToggle() {
-    const next = theme === 'dark' ? 'light' : 'dark';
+    // Bug: this used to branch on the literal string theme === 'dark',
+    // ignoring that theme can be 'system' while VISUALLY resolving to dark
+    // (matching the OS preference — the default for anyone who's never
+    // manually toggled, including via the DB profile's default 'system'
+    // value). For those users the first click set theme from 'system' to
+    // the explicit string 'dark' — which is the SAME rendered appearance,
+    // so nothing visibly changed — and only the second click (now genuinely
+    // 'dark' -> 'light') produced a visible flip. Deriving "is it currently
+    // dark" the same way the theme-sync effect does (below) and flipping
+    // THAT means a single click always changes what's rendered, regardless
+    // of whether the prior state was 'system', 'light', or 'dark'.
+    const isDarkNow =
+      theme === 'dark' ||
+      (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const next: 'light' | 'dark' = isDarkNow ? 'light' : 'dark';
     setTheme(next);
     // Best-effort sync to the profile row too, so the choice follows the
     // user across devices/browsers, not just this one via localStorage.
