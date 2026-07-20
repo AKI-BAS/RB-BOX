@@ -1,0 +1,6 @@
+# Downloaded PDFs + extracted document text/metadata — real document
+# content, not meant to be committed. Regenerate with `node select-sample.mjs`.
+sample/
+
+# Generated report (Phase B) — regenerate with `node build-report.mjs`.
+output/
