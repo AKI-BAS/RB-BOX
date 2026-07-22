@@ -230,6 +230,40 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['category_keywords']['Row']>;
         Relationships: [];
       };
+      tabs: {
+        Row: {
+          id: string;
+          slug: string;
+          name: string;
+          name_en: string | null;
+          description: string | null;
+          min_access_level: 'open' | 'internal' | 'restricted' | 'paid';
+          is_active: boolean;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['tabs']['Row']> & {
+          slug: string;
+          name: string;
+        };
+        Update: Partial<Database['public']['Tables']['tabs']['Row']>;
+        Relationships: [];
+      };
+      tab_documents: {
+        Row: {
+          id: string;
+          tab_id: string;
+          document_id: string;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['tab_documents']['Row']> & {
+          tab_id: string;
+          document_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['tab_documents']['Row']>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
