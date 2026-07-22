@@ -1,14 +1,19 @@
 'use client';
 
 import { t, type Lang } from '@/lib/i18n';
-import type { Source, Category, Database } from '@/types/database';
-
-type AccessLevel = Database['public']['Tables']['documents']['Row']['access_level'];
+import type { Source, Category } from '@/types/database';
 
 export interface Filters {
-  access: Set<AccessLevel>;
   sources: Set<string>;
   category: string | null;
+}
+
+export interface Tab {
+  id: string;
+  slug: string;
+  name: string;
+  name_en: string | null;
+  sort_order: number;
 }
 
 interface BrowsePanelProps {
@@ -16,19 +21,13 @@ interface BrowsePanelProps {
   sources: Source[];
   sourceCounts: Record<string, number>;
   categories: Category[];
+  tabs: Tab[];
+  activeTabId: string | null;
+  onTabSelect: (id: string | null) => void;
   filters: Filters;
   onChange: (f: Filters) => void;
   onClose: () => void;
 }
-
-const ACCESS_LEVELS: Array<{
-  key: 'open' | 'internal' | 'restricted' | 'paid';
-}> = [
-  { key: 'open' },
-  { key: 'internal' },
-  { key: 'restricted' },
-  { key: 'paid' },
-];
 
 function toggle<T>(set: Set<T>, value: T): Set<T> {
   const next = new Set(set);
@@ -60,15 +59,18 @@ export function BrowsePanel({
   sources,
   sourceCounts,
   categories,
+  tabs,
+  activeTabId,
+  onTabSelect,
   filters,
   onChange,
   onClose,
 }: BrowsePanelProps) {
 
   const activeCount =
-    filters.access.size +
     filters.sources.size +
-    (filters.category ? 1 : 0);
+    (filters.category ? 1 : 0) +
+    (activeTabId ? 1 : 0);
 
   const roots = categories.filter((c) => !c.parent_id);
   const childrenOf = (id: string) =>
@@ -98,31 +100,30 @@ export function BrowsePanel({
 
       {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-5">
-        {/* Access */}
+        {/* Flipar — clicking one swaps the whole list to that tab's docs;
+            picking any other filter/search below clears it (see page.tsx) */}
         <section>
-          <h3 className="section-label mb-2.5">{t(lang, 'access')}</h3>
-          <ul className="space-y-1.5">
-            {ACCESS_LEVELS.map(({ key }) => {
-              const checked = filters.access.has(key);
+          <h3 className="section-label mb-2.5">{t(lang, 'tabs')}</h3>
+          <ul className="space-y-0.5">
+            {tabs.length === 0 && (
+              <li className="text-[11px] text-paper-faint dark:text-ink-faint italic">
+                {lang === 'is' ? 'Engir flipar enn' : 'No tabs yet'}
+              </li>
+            )}
+            {tabs.map((tab) => {
+              const active = activeTabId === tab.id;
               return (
-                <li key={key}>
-                  <label className="flex items-center gap-2.5 text-[13px] cursor-pointer group">
-                    <CheckSquare checked={checked} />
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() =>
-                        onChange({
-                          ...filters,
-                          access: toggle(filters.access, key),
-                        })
-                      }
-                      className="sr-only"
-                    />
-                    <span className={`transition ${checked ? '' : 'text-paper-soft dark:text-ink-soft'} group-hover:text-brick-500`}>
-                      {t(lang, key)}
-                    </span>
-                  </label>
+                <li key={tab.id}>
+                  <button
+                    onClick={() => onTabSelect(active ? null : tab.id)}
+                    className={`text-[13px] w-full text-left py-1 transition ${
+                      active
+                        ? 'text-brick-500 font-semibold'
+                        : 'text-paper-soft dark:text-ink-soft hover:text-brick-500'
+                    }`}
+                  >
+                    {lang === 'en' && tab.name_en ? tab.name_en : tab.name}
+                  </button>
                 </li>
               );
             })}
@@ -251,13 +252,10 @@ export function BrowsePanel({
         </span>
         {activeCount > 0 && (
           <button
-            onClick={() =>
-              onChange({
-                access: new Set(),
-                sources: new Set(),
-                category: null,
-              })
-            }
+            onClick={() => {
+              onChange({ sources: new Set(), category: null });
+              onTabSelect(null);
+            }}
             className="text-brick-500 font-medium hover:underline"
           >
             {t(lang, 'clearAll')}

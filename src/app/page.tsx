@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { t, type Lang } from '@/lib/i18n';
-import { BrowsePanel, type Filters } from '@/components/BrowsePanel';
+import { BrowsePanel, type Filters, type Tab } from '@/components/BrowsePanel';
 import { Spotlight } from '@/components/Spotlight';
 import { PdfPreviewModal } from '@/components/PdfPreviewModal';
 import { deriveSearchTerms, expandCodeVariants } from '@/lib/search/highlight';
@@ -40,9 +40,6 @@ function readStoredFilters(): Filters | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return {
-      // Deliberately NOT restoring access — see the persist-effect below for
-      // why. Any older stored value (from before this fix) is just ignored.
-      access: new Set(),
       sources: new Set(parsed.sources ?? []),
       category: parsed.category ?? null,
     };
@@ -92,10 +89,11 @@ export default function HomePage() {
   const [totalDocs, setTotalDocs] = useState<number>(0);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({
-    access: new Set(),
     sources: new Set<string>(),
     category: null,
   });
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [profile, setProfile] = useState<{
     username: string;
     full_name: string | null;
@@ -156,6 +154,7 @@ export default function HomePage() {
         { data: docCounts },
         { data: latest },
         { data: tagRows },
+        { data: tabRows },
       ] = await Promise.all([
         supabase.from('sources').select('*').eq('is_active', true).order('name'),
         supabase.from('categories').select('*').order('sort_order'),
@@ -173,10 +172,12 @@ export default function HomePage() {
         // Best-effort: only feeds the "did you mean" vocabulary below, so a
         // missing/renamed table here shouldn't break the rest of the page.
         supabase.from('tags').select('name'),
+        supabase.from('tabs').select('*').eq('is_active', true).order('sort_order'),
       ]);
 
       if (srcs) setSources(srcs);
       if (cats) setCategories(cats);
+      if (tabRows) setTabs(tabRows as Tab[]);
       if (docCounts) {
         const counts: Record<string, number> = {};
         docCounts.forEach((d: any) => {
@@ -274,9 +275,6 @@ export default function HomePage() {
         q = q.or(clauses.join(','));
       });
     }
-    if (filters.access.size > 0) {
-      q = q.in('access_level', Array.from(filters.access));
-    }
     if (filters.sources.size > 0) {
       q = q.in('source_id', Array.from(filters.sources));
     }
@@ -289,10 +287,50 @@ export default function HomePage() {
     if (data) setResults(data as unknown as Document[]);
   }, [query, filters]);
 
+  // A tab replaces the normal document list rather than filtering it —
+  // pulled straight from tab_documents in its own sort order, bypassing
+  // runSearch/query/filters entirely while active.
+  const loadTabResults = useCallback(async (tabId: string) => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('tab_documents')
+      .select('sort_order, documents(*)')
+      .eq('tab_id', tabId)
+      .order('sort_order');
+    const docs = (data ?? [])
+      .map((row: any) => row.documents)
+      .filter(Boolean) as Document[];
+    setResults(docs);
+  }, []);
+
   useEffect(() => {
+    if (activeTabId) {
+      loadTabResults(activeTabId);
+      return;
+    }
     const timer = setTimeout(runSearch, 150);
     return () => clearTimeout(timer);
-  }, [runSearch]);
+  }, [runSearch, activeTabId, loadTabResults]);
+
+  // Selecting a tab is mutually exclusive with search/filters — clear those
+  // so re-opening a normal view later doesn't inherit stale state.
+  function handleTabSelect(id: string | null) {
+    setActiveTabId(id);
+    if (id) {
+      setQuery('');
+      setFilters({ sources: new Set(), category: null });
+    }
+  }
+
+  function handleQueryChange(q: string) {
+    if (activeTabId) setActiveTabId(null);
+    setQuery(q);
+  }
+
+  function handleFiltersChange(f: Filters) {
+    if (activeTabId) setActiveTabId(null);
+    setFilters(f);
+  }
 
   // ⌘K + [
   useEffect(() => {
@@ -381,7 +419,7 @@ export default function HomePage() {
   }
 
   const activeFilterCount =
-    filters.access.size + filters.sources.size + (filters.category ? 1 : 0);
+    filters.sources.size + (filters.category ? 1 : 0) + (activeTabId ? 1 : 0);
 
   const syncLabel = useMemo(
     () => relativeSync(lang, lastSync),
@@ -514,8 +552,11 @@ export default function HomePage() {
             sources={sources}
             sourceCounts={sourceCounts}
             categories={categories}
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onTabSelect={handleTabSelect}
             filters={filters}
-            onChange={setFilters}
+            onChange={handleFiltersChange}
             onClose={() => setBrowseOpen(false)}
           />
         )}
@@ -526,13 +567,16 @@ export default function HomePage() {
               lang={lang}
               inputRef={searchRef}
               query={query}
-              onQueryChange={setQuery}
+              onQueryChange={handleQueryChange}
               results={results}
               sources={sources}
               categories={categories}
               activeCategory={filters.category}
               hasActiveFilters={activeFilterCount > 0}
-              onClearFilters={() => setFilters({ access: new Set(), sources: new Set(), category: null })}
+              onClearFilters={() => {
+                setFilters({ sources: new Set(), category: null });
+                setActiveTabId(null);
+              }}
               suggestion={suggestion}
               onSuggestionClick={setQuery}
               ready={ready}
